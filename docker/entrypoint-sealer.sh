@@ -21,6 +21,7 @@ fi
 
 exec geth \
   --networkid 10742 \
+  --syncmode full \
   --port "${P2P_PORT:-30303}" \
   --http --http.addr 0.0.0.0 --http.port 8545 \
   --http.api eth,net,web3,clique,admin,miner,txpool \

@@ -30,6 +30,7 @@ fi
 exec geth \
   --datadir "$DATADIR" \
   --networkid "$NETWORK_ID" \
+  --syncmode full \
   --port "$PORT" \
   --authrpc.port "$AUTHRPC_PORT" \
   --authrpc.addr 127.0.0.1 \

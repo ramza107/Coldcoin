@@ -16,6 +16,7 @@ fi
 exec geth \
   --datadir "$DATADIR" \
   --networkid "$NETWORK_ID" \
+  --syncmode full \
   --port 30306 \
   --authrpc.port 8555 \
   --authrpc.addr 127.0.0.1 \

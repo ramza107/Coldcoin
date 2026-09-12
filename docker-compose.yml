@@ -88,7 +88,7 @@ services:
     networks:
       coldnet:
         ipv4_address: 172.28.0.30
-    restart: "no"
+    restart: unless-stopped
 
 networks:
   coldnet:
