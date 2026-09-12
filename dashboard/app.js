@@ -30,12 +30,15 @@ async function refresh() {
     set('m-block', String(parseInt(blockHex, 16)));
     set('m-peers', String(parseInt(peerHex, 16)));
     set('m-gas', `${(Number(BigInt(gasHex)) / 1e9).toFixed(2)} gwei`);
+    document.getElementById('live-line').textContent =
+      `online · блок ${parseInt(blockHex, 16)} · пиры ${parseInt(peerHex, 16)}`;
     pulse.textContent = `Обновлено · ${new Date().toLocaleTimeString()}`;
   } catch (err) {
     set('m-state', 'offline');
     set('m-block', '—');
     set('m-peers', '—');
     set('m-gas', '—');
+    document.getElementById('live-line').textContent = 'узел offline';
     pulse.textContent = `Узел недоступен: ${err.message}. Запустите ./scripts/start-network.sh`;
   }
 }
