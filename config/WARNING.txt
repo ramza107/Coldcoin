@@ -1,0 +1,8 @@
+# DEV KEYS — DO NOT USE ON MAINNET
+
+Private keys under `config/keys/` and in `accounts.json` are intentionally
+checked into this repository so anyone can reproduce the Coldcoin private
+network locally.
+
+Never fund these addresses on public networks. Never reuse these keys for
+production wallets, bridges, or exchanges.

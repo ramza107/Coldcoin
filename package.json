@@ -1,0 +1,24 @@
+{
+  "name": "coldcoin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Coldcoin — private Ethereum Clique PoA network with native COLD",
+  "scripts": {
+    "init": "bash scripts/init-network.sh",
+    "start": "bash scripts/start-network.sh",
+    "stop": "bash scripts/stop-network.sh",
+    "faucet": "node faucet/server.js",
+    "faucet:send": "node faucet/send.js",
+    "dashboard": "node dashboard/server.js",
+    "deploy:registry": "node scripts/deploy-registry.js",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0",
+    "solc": "^0.8.28"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

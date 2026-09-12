@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Coldcoin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="top">
+    <div class="mark">COLD</div>
+    <nav>
+      <a href="#network">Сеть</a>
+      <a href="#connect">Подключение</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="brand">Coldcoin</p>
+      <h1>Частная Ethereum‑сеть с нативным COLD</h1>
+      <p class="lede">Clique PoA · chainId 10742 · блоки каждые 5 секунд</p>
+      <div class="cta">
+        <button type="button" id="refresh">Обновить статус</button>
+        <a class="ghost" href="#connect">RPC endpoint</a>
+      </div>
+    </section>
+
+    <section id="network" class="status-section">
+      <h2>Живой статус</h2>
+      <p class="section-note">Данные напрямую с локального JSON‑RPC узла.</p>
+      <div class="metrics" id="metrics">
+        <div class="metric"><span class="label">Состояние</span><strong id="m-state">—</strong></div>
+        <div class="metric"><span class="label">Блок</span><strong id="m-block">—</strong></div>
+        <div class="metric"><span class="label">Пиры</span><strong id="m-peers">—</strong></div>
+        <div class="metric"><span class="label">Gas price</span><strong id="m-gas">—</strong></div>
+      </div>
+      <p class="pulse" id="pulse"></p>
+    </section>
+
+    <section id="connect" class="connect-section">
+      <h2>Подключение кошелька</h2>
+      <p class="section-note">Добавьте кастомную сеть в MetaMask или любой EVM‑кошелёк.</p>
+      <dl class="kv">
+        <div><dt>Network name</dt><dd>Coldcoin</dd></div>
+        <div><dt>RPC URL</dt><dd><code>http://127.0.0.1:8545</code></dd></div>
+        <div><dt>Chain ID</dt><dd><code>10742</code></dd></div>
+        <div><dt>Currency symbol</dt><dd><code>COLD</code></dd></div>
+        <div><dt>WebSocket</dt><dd><code>ws://127.0.0.1:8546</code></dd></div>
+      </dl>
+      <button type="button" id="add-wallet">Добавить в MetaMask</button>
+    </section>
+  </main>
+
+  <footer>
+    <span>Coldcoin · DEV / PRIVATE NETWORK</span>
+  </footer>
+
+  <script src="./app.js" type="module"></script>
+</body>
+</html>

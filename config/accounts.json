@@ -1,0 +1,30 @@
+{
+  "sealer1": {
+    "address": "0x8e121c22ff28fd068635675325540c82efc30d20",
+    "privateKey": "0xd97cba3dc1f1ce7796ce1e9950060efb856e74b061b98226969ef2a4f53856c6"
+  },
+  "sealer2": {
+    "address": "0x576d3570e91f1aafdb6e2765dc92771da8a40ae1",
+    "privateKey": "0xa93c7bb5fbe38467c1a4c27c578b0ce063ef0a4530b7cf62eeea8e37eb85f1f8"
+  },
+  "sealer3": {
+    "address": "0xff555b1b28b1a7b2503e53e6b840959423671930",
+    "privateKey": "0xf9ff9eaffdd7ebf5286573dae727f8cc099ad0e1490874a34f73c158654f5308"
+  },
+  "faucet": {
+    "address": "0xecd5838f7054436b7c19e355c7c30132205abe71",
+    "privateKey": "0xb1c7253971d8c4a01b5ae86401e12869102b6931648aa1ca715f8f8d101df39b"
+  },
+  "treasury": {
+    "address": "0x936e6db9ace50816af2e7608e0b548a54c130da9",
+    "privateKey": "0x86f7a6c1da6a168de33022ff7ba3d34dba55a2d87deda73f56c4250bf875572e"
+  },
+  "dev1": {
+    "address": "0x154588f833cc0b1c193d47e154447283a0dcc833",
+    "privateKey": "0x535511a2b5f6f3f53c29ec8d98d722ea9901a36cf6827ef4af5b0d952e29e74c"
+  },
+  "dev2": {
+    "address": "0x0c94e2331af0e4f7a858e0893de939fd5e20d429",
+    "privateKey": "0xd0a02f3d5e0a5d50ef08a905ba378eb544e2fb55700809ea003dbb56b3e84e3e"
+  }
+}

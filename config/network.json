@@ -1,0 +1,12 @@
+{
+  "name": "Coldcoin",
+  "symbol": "COLD",
+  "decimals": 18,
+  "chainId": 10742,
+  "consensus": "clique",
+  "blockPeriodSeconds": 5,
+  "rpcHttp": "http://127.0.0.1:8545",
+  "rpcWs": "ws://127.0.0.1:8546",
+  "networkId": 10742,
+  "warning": "DEV / PRIVATE NETWORK ONLY. Keys in this repo are intentionally public for local testing. Never reuse them on mainnet or with real funds."
+}
