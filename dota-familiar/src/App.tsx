@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   absorbMatchIntoIndex,
+  accountIdToSteam64,
   buildFamiliarIndex,
   fetchLatestMatchId,
   fetchMatch,
@@ -8,6 +9,7 @@ import {
   matchPlayersFromDetail,
   rankLabel,
   resolveAccountId,
+  winrate,
 } from './lib/opendota'
 import {
   clearIndex,
@@ -364,7 +366,14 @@ export default function App() {
                 <p className="help" style={{ marginBottom: 0 }}>
                   {activeMatchId ? (
                     <>
-                      Match <code>{activeMatchId}</code>
+                      Match{' '}
+                      <a
+                        href={`https://www.opendota.com/matches/${activeMatchId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {activeMatchId}
+                      </a>
                       {lastCheckedAt ? ` · updated ${new Date(lastCheckedAt).toLocaleTimeString()}` : ''}
                       {familiarInMatch ? ` · ${familiarInMatch} familiar` : ''}
                     </>
@@ -428,12 +437,20 @@ export default function App() {
                     <span>
                       Against you wins: {p.winsAgainst}/{p.asEnemy || 0}
                     </span>
+                  </div>
+                  <div className="links">
+                    <a href={`https://www.opendota.com/players/${p.accountId}`} target="_blank" rel="noreferrer">
+                      OpenDota
+                    </a>
+                    <a href={`https://www.dotabuff.com/players/${p.accountId}`} target="_blank" rel="noreferrer">
+                      Dotabuff
+                    </a>
                     <a
-                      href={`https://www.opendota.com/players/${p.accountId}`}
+                      href={`https://steamcommunity.com/profiles/${accountIdToSteam64(p.accountId)}`}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      OpenDota
+                      Steam
                     </a>
                   </div>
                 </article>
@@ -452,22 +469,75 @@ function TeamBlock({ title, players }: { title: string; players: CheckedPlayer[]
     <div className="team">
       <h3>{title}</h3>
       <ul>
-        {players.map((p, idx) => (
-          <li key={`${p.accountId}-${idx}`} className={p.familiar ? 'familiar' : p.isOwner ? 'you' : ''}>
-            <div className="line">
-              <div>
-                <b>{p.isOwner ? `${p.personaname || 'You'} (you)` : p.personaname || 'Anonymous / private'}</b>
-                <span className="id">
-                  Hero #{p.heroId}
-                  {p.accountId ? ` · ${p.accountId}` : ' · no account'}
-                  {p.profile?.rankTier != null ? ` · ${rankLabel(p.profile.rankTier)}` : ''}
-                </span>
+        {players.map((p, idx) => {
+          const wr = winrate(p.profile?.wins, p.profile?.losses)
+          const games =
+            p.profile?.wins != null && p.profile?.losses != null
+              ? p.profile.wins + p.profile.losses
+              : null
+          return (
+            <li key={`${p.accountId}-${idx}`} className={p.familiar ? 'familiar' : p.isOwner ? 'you' : ''}>
+              <div className="line">
+                <div>
+                  <b>
+                    {p.isOwner
+                      ? `${p.personaname || 'You'} (you)`
+                      : p.personaname || 'Anonymous / private'}
+                  </b>
+                  <span className="id">
+                    Hero #{p.heroId}
+                    {p.level != null ? ` · lvl ${p.level}` : ''}
+                    {p.accountId ? ` · ${p.accountId}` : ' · no account'}
+                  </span>
+                </div>
+                {p.familiar && <FamiliarBadge rec={p.familiar} />}
+                {!p.familiar && !p.isOwner && p.accountId && <span className="badge new">New to you</span>}
               </div>
-              {p.familiar && <FamiliarBadge rec={p.familiar} />}
-              {!p.familiar && !p.isOwner && p.accountId && <span className="badge new">New to you</span>}
-            </div>
-          </li>
-        ))}
+
+              <div className="stats-grid">
+                <div>
+                  <em>This match</em>
+                  <strong>
+                    {p.kills ?? '-'}/{p.deaths ?? '-'}/{p.assists ?? '-'}
+                  </strong>
+                  <span>
+                    {p.gpm != null ? `${p.gpm} GPM` : ''}
+                    {p.gpm != null && p.xpm != null ? ' · ' : ''}
+                    {p.xpm != null ? `${p.xpm} XPM` : ''}
+                    {p.netWorth != null ? ` · ${p.netWorth} NW` : ''}
+                  </span>
+                </div>
+                <div>
+                  <em>Career</em>
+                  <strong>{p.profile?.rankTier != null ? rankLabel(p.profile.rankTier) : '—'}</strong>
+                  <span>
+                    {wr ? `${wr} WR` : 'WR n/a'}
+                    {games != null ? ` · ${games} games` : ''}
+                    {p.profile?.wins != null ? ` · ${p.profile.wins}W-${p.profile.losses}L` : ''}
+                  </span>
+                </div>
+              </div>
+
+              {p.accountId != null && (
+                <div className="links">
+                  <a href={`https://www.opendota.com/players/${p.accountId}`} target="_blank" rel="noreferrer">
+                    OpenDota
+                  </a>
+                  <a href={`https://www.dotabuff.com/players/${p.accountId}`} target="_blank" rel="noreferrer">
+                    Dotabuff
+                  </a>
+                  <a
+                    href={`https://steamcommunity.com/profiles/${accountIdToSteam64(p.accountId)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Steam
+                  </a>
+                </div>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

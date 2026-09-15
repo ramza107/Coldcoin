@@ -298,9 +298,52 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 .person-meta a { color: #9ec5ff; }
 
+.stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.55rem;
+  margin-top: 0.15rem;
+}
+.stats-grid div {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+  background: rgba(8, 12, 16, 0.55);
+}
+.stats-grid em {
+  display: block;
+  font-style: normal;
+  color: var(--muted);
+  font-size: 0.72rem;
+  margin-bottom: 0.15rem;
+}
+.stats-grid strong {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 0.1rem;
+}
+.stats-grid span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.2rem;
+}
+.links a {
+  color: #9ec5ff;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+.links a:hover { text-decoration: underline; }
+
 @media (max-width: 800px) {
   .teams { grid-template-columns: 1fr; }
   .owner { display: none; }
   .row.spread { align-items: stretch; flex-direction: column; }
   .search { max-width: none; }
+  .stats-grid { grid-template-columns: 1fr; }
 }

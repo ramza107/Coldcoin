@@ -32,7 +32,8 @@ export async function resolveAccountId(input: string): Promise<AccountId> {
 }
 
 async function api<T>(path: string): Promise<T> {
-  const res = await fetch(`/opendota${path}`)
+  const base = import.meta.env.DEV ? '/opendota' : 'https://api.opendota.com/api'
+  const res = await fetch(`${base}${path}`)
   if (!res.ok) throw new Error(`OpenDota error ${res.status}`)
   return res.json() as Promise<T>
 }
@@ -49,15 +50,18 @@ export async function searchPlayers(q: string): Promise<PlayerProfile[]> {
 }
 
 export async function fetchPlayer(accountId: AccountId): Promise<PlayerProfile> {
-  const data = await api<{
-    profile?: {
-      personaname?: string
-      avatarfull?: string
-      profileurl?: string
-    }
-    rank_tier?: number | null
-    leaderboard_rank?: number | null
-  }>(`/players/${accountId}`)
+  const [data, wl] = await Promise.all([
+    api<{
+      profile?: {
+        personaname?: string
+        avatarfull?: string
+        profileurl?: string
+      }
+      rank_tier?: number | null
+      leaderboard_rank?: number | null
+    }>(`/players/${accountId}`),
+    api<{ win: number; lose: number }>(`/players/${accountId}/wl`).catch(() => ({ win: 0, lose: 0 })),
+  ])
 
   return {
     accountId,
@@ -66,6 +70,8 @@ export async function fetchPlayer(accountId: AccountId): Promise<PlayerProfile> 
     profileurl: data.profile?.profileurl,
     rankTier: data.rank_tier ?? null,
     leaderboardRank: data.leaderboard_rank ?? null,
+    wins: wl.win,
+    losses: wl.lose,
   }
 }
 
@@ -83,6 +89,13 @@ interface MatchDetail {
     personaname?: string
     player_slot: number
     hero_id: number
+    kills?: number
+    deaths?: number
+    assists?: number
+    net_worth?: number
+    gold_per_min?: number
+    xp_per_min?: number
+    level?: number
   }>
 }
 
@@ -249,8 +262,26 @@ export function matchPlayersFromDetail(detail: MatchDetail, ownerAccountId?: Acc
       team,
       win,
       isOwner: ownerAccountId != null && p.account_id === ownerAccountId,
+      kills: p.kills,
+      deaths: p.deaths,
+      assists: p.assists,
+      netWorth: p.net_worth,
+      gpm: p.gold_per_min,
+      xpm: p.xp_per_min,
+      level: p.level,
     }
   })
+}
+
+export function accountIdToSteam64(accountId: AccountId): string {
+  return (BigInt(accountId) + STEAM64_BASE).toString()
+}
+
+export function winrate(wins?: number, losses?: number): string | null {
+  if (wins == null || losses == null) return null
+  const total = wins + losses
+  if (!total) return null
+  return `${((wins / total) * 100).toFixed(1)}%`
 }
 
 export function rankLabel(rankTier?: number | null): string {

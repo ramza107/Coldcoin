@@ -7,6 +7,8 @@ export interface PlayerProfile {
   profileurl?: string
   rankTier?: number | null
   leaderboardRank?: number | null
+  wins?: number
+  losses?: number
 }
 
 export interface FamiliarRecord {
@@ -38,6 +40,13 @@ export interface MatchPlayer {
   team: 'radiant' | 'dire'
   win?: boolean
   isOwner?: boolean
+  kills?: number
+  deaths?: number
+  assists?: number
+  netWorth?: number
+  gpm?: number
+  xpm?: number
+  level?: number
 }
 
 export interface CheckedPlayer extends MatchPlayer {
