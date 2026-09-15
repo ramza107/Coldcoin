@@ -12,6 +12,8 @@
     "companion:only": "node companion/server.mjs",
     "desktop": "npm run build && npx --yes electron@33.2.1 desktop/main.cjs",
     "start": "npm run companion:only",
+    "mini-client": "npm run companion",
+    "deploy": "GH_PAGES=1 npm run build && gh-pages -d dist"
   },
   "dependencies": {
     "react": "^19.2.8",
