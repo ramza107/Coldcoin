@@ -6,11 +6,13 @@ import {
   buildFamiliarIndex,
   fetchLatestMatchId,
   fetchMatch,
+  bestExactNickHit,
   fetchPlayer,
   fetchPlayerRecentBrief,
   matchPlayersFromDetail,
   rankLabel,
   resolveAccountId,
+  searchPlayers,
   steam64ToAccountId,
   winrate,
 } from './lib/opendota'
@@ -36,6 +38,7 @@ import type {
   FamiliarRecord,
   LiveLobby,
   LiveLobbyPlayer,
+  PlayerProfile,
   RecentMatchBrief,
 } from './types'
 import './App.css'
@@ -157,13 +160,20 @@ async function enrichLobbyPlayers(
   return out
 }
 
-function parseEnemyPaste(raw: string, myTeam: 'radiant' | 'dire'): LiveLobbyPlayer[] {
+function parseEnemyPaste(raw: string, myTeam: 'radiant' | 'dire'): {
+  players: LiveLobbyPlayer[]
+  unresolvedNicks: string[]
+} {
   const enemyTeam = myTeam === 'radiant' ? 'dire' : 'radiant'
   const tokens = raw
-    .split(/[\s,;]+/)
+    .split(/[\n,;]+/)
+    .flatMap((line) => line.trim().split(/\s{2,}|\t+/))
     .map((t) => t.trim())
     .filter(Boolean)
   const players: LiveLobbyPlayer[] = []
+  const unresolvedNicks: string[] = []
+  const seen = new Set<string>()
+
   for (const token of tokens) {
     try {
       let accountId: number | null = null
@@ -173,14 +183,31 @@ function parseEnemyPaste(raw: string, myTeam: 'radiant' | 'dire'): LiveLobbyPlay
       else if (st) accountId = steam64ToAccountId(st[1])
       else if (/^\d{17}$/.test(token)) accountId = steam64ToAccountId(token)
       else if (/^\d{3,12}$/.test(token)) accountId = Number(token)
+
       if (accountId) {
-        players.push({ accountId, heroId: 0, team: enemyTeam })
+        if (!seen.has(String(accountId))) {
+          seen.add(String(accountId))
+          players.push({ accountId, heroId: 0, team: enemyTeam })
+        }
+      } else if (!/^https?:\/\//i.test(token)) {
+        const key = token.toLowerCase()
+        if (!seen.has(`nick:${key}`)) {
+          seen.add(`nick:${key}`)
+          unresolvedNicks.push(token)
+        }
       }
     } catch {
       // skip bad token
     }
   }
-  return players
+  return { players, unresolvedNicks }
+}
+
+function familiarByNick(index: FamiliarIndex, nick: string): FamiliarRecord | null {
+  const needle = nick.trim().toLowerCase()
+  if (!needle) return null
+  const hits = Object.values(index.players).filter((p) => p.personaname.toLowerCase() === needle)
+  return hits.length === 1 ? hits[0] : null
 }
 
 export default function App() {
@@ -202,6 +229,8 @@ export default function App() {
   const [companionUrl, setCompanionUrl] = useState(loadCompanionUrl())
   const [companionOnline, setCompanionOnline] = useState(false)
   const [enemyPaste, setEnemyPaste] = useState('')
+  const [nickHits, setNickHits] = useState<PlayerProfile[]>([])
+  const [nickSearchLabel, setNickSearchLabel] = useState('')
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null)
   const indexRef = useRef<FamiliarIndex | null>(null)
   const bootRef = useRef(false)
@@ -516,54 +545,206 @@ export default function App() {
     }
   }
 
+  async function pushOrApplyPasteLobby(enemies: LiveLobbyPlayer[], myTeam: 'radiant' | 'dire') {
+    if (!index) return
+    const me: LiveLobbyPlayer = {
+      accountId: index.ownerAccountId,
+      personaname: index.ownerName,
+      heroId: 0,
+      team: myTeam,
+      isOwner: true,
+    }
+    const next: LiveLobby = {
+      source: 'paste',
+      updatedAt: Date.now(),
+      matchStartedAt: Date.now(),
+      myTeam,
+      players: [me, ...enemies],
+      enemies,
+      allies: [me],
+      awaitingRoster: false,
+    }
+    lobbySigRef.current = ''
+    await applyLobby(next, index)
+    try {
+      await fetch(`${companionUrl.replace(/\/$/, '')}/lobby`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      })
+    } catch {
+      // optional
+    }
+  }
+
+  async function resolveNicksToPlayers(
+    nicks: string[],
+    myTeam: 'radiant' | 'dire',
+  ): Promise<{ players: LiveLobbyPlayer[]; leftoverHits: PlayerProfile[]; leftoverLabel: string }> {
+    const enemyTeam = myTeam === 'radiant' ? 'dire' : 'radiant'
+    const players: LiveLobbyPlayer[] = []
+    let leftoverHits: PlayerProfile[] = []
+    let leftoverLabel = ''
+
+    for (const nick of nicks) {
+      const known = index ? familiarByNick(index, nick) : null
+      if (known) {
+        players.push({
+          accountId: known.accountId,
+          personaname: known.personaname,
+          heroId: 0,
+          team: enemyTeam,
+        })
+        continue
+      }
+
+      const hits = await searchPlayers(nick)
+      const exact = bestExactNickHit(hits, nick)
+      if (exact) {
+        players.push({
+          accountId: exact.accountId,
+          personaname: exact.personaname,
+          heroId: 0,
+          team: enemyTeam,
+        })
+        continue
+      }
+
+      if (hits.length === 1) {
+        players.push({
+          accountId: hits[0].accountId,
+          personaname: hits[0].personaname,
+          heroId: 0,
+          team: enemyTeam,
+        })
+        continue
+      }
+
+      leftoverHits = hits
+      leftoverLabel = nick
+      break
+    }
+
+    return { players, leftoverHits, leftoverLabel }
+  }
+
+  async function applyEnemyHit(hit: PlayerProfile) {
+    if (!index) return
+    const myTeam = lobby?.myTeam || 'radiant'
+    const enemyTeam = myTeam === 'radiant' ? 'dire' : 'radiant'
+    const existing = (lobby?.enemies || []).filter((p) => p.accountId)
+    const already = existing.some((p) => p.accountId === hit.accountId)
+    const enemies: LiveLobbyPlayer[] = already
+      ? existing
+      : [
+          ...existing,
+          {
+            accountId: hit.accountId,
+            personaname: hit.personaname,
+            heroId: 0,
+            team: enemyTeam,
+          },
+        ]
+    await pushOrApplyPasteLobby(enemies, myTeam)
+    setNickHits([])
+    setNickSearchLabel('')
+    setEnemyPaste('')
+    setStatus(`Picked ${hit.personaname} · check avatar matched the lobby`)
+  }
+
   async function handlePasteEnemies() {
     if (!index) return
     setError('')
     setBusy(true)
+    setNickHits([])
+    setNickSearchLabel('')
     try {
       const myTeam = lobby?.myTeam || 'radiant'
-      let enemies = parseEnemyPaste(enemyPaste, myTeam)
+      const parsed = parseEnemyPaste(enemyPaste, myTeam)
+      let enemies = [...parsed.players]
+
+      if (parsed.unresolvedNicks.length) {
+        const resolved = await resolveNicksToPlayers(parsed.unresolvedNicks, myTeam)
+        enemies = [...enemies, ...resolved.players]
+        if (resolved.leftoverLabel) {
+          setNickHits(resolved.leftoverHits)
+          setNickSearchLabel(resolved.leftoverLabel)
+          if (enemies.length) {
+            await pushOrApplyPasteLobby(enemies, myTeam)
+          }
+          if (!resolved.leftoverHits.length) {
+            throw new Error(`No OpenDota hits for nick “${resolved.leftoverLabel}”. Try another spelling.`)
+          }
+          setStatus(
+            `Pick the right avatar for “${resolved.leftoverLabel}” — nicks are not unique`,
+          )
+          return
+        }
+      }
+
       if (!enemies.length) {
         const one = enemyPaste.trim()
-        if (one) {
+        if (one && !parsed.unresolvedNicks.length) {
           const id = await resolveAccountId(one)
           enemies = [{ accountId: id, heroId: 0, team: myTeam === 'radiant' ? 'dire' : 'radiant' }]
         }
       }
-      if (!enemies.length) throw new Error('Paste enemy account IDs, Steam64, or OpenDota links')
 
-      const me: LiveLobbyPlayer = {
-        accountId: index.ownerAccountId,
-        personaname: index.ownerName,
-        heroId: 0,
-        team: myTeam,
-        isOwner: true,
+      if (!enemies.length) {
+        throw new Error('Paste IDs, OpenDota links, or enemy nicks (then pick by avatar)')
       }
-      const next: LiveLobby = {
-        source: 'paste',
-        updatedAt: Date.now(),
-        matchStartedAt: Date.now(),
-        myTeam,
-        players: [me, ...enemies],
-        enemies,
-        allies: [me],
-        awaitingRoster: false,
-      }
-      lobbySigRef.current = ''
-      await applyLobby(next, index)
 
-      // also push to companion if online
-      try {
-        await fetch(`${companionUrl.replace(/\/$/, '')}/lobby`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(next),
-        })
-      } catch {
-        // optional
-      }
+      await pushOrApplyPasteLobby(enemies, myTeam)
+      setEnemyPaste('')
+      setStatus(`Loaded ${enemies.length} enem${enemies.length === 1 ? 'y' : 'ies'} (ID / nick)`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load enemies')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handlePickNickCandidate(hit: PlayerProfile) {
+    if (!index) return
+    setError('')
+    setBusy(true)
+    try {
+      await applyEnemyHit(hit)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load player')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleSearchNickOnly() {
+    if (!index || !enemyPaste.trim()) return
+    setError('')
+    setBusy(true)
+    setNickHits([])
+    try {
+      const nick = enemyPaste.trim().split(/[\n,;]/)[0].trim()
+      const known = familiarByNick(index, nick)
+      if (known) {
+        await applyEnemyHit({
+          accountId: known.accountId,
+          personaname: known.personaname,
+          avatarfull: known.avatar,
+        })
+        return
+      }
+      const hits = await searchPlayers(nick)
+      const exact = bestExactNickHit(hits, nick)
+      if (exact) {
+        await applyEnemyHit(exact)
+        return
+      }
+      setNickSearchLabel(nick)
+      setNickHits(hits)
+      if (!hits.length) throw new Error(`No OpenDota hits for “${nick}”`)
+      setStatus(`Choose the matching avatar for “${nick}”`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Nick search failed')
     } finally {
       setBusy(false)
     }
@@ -824,20 +1005,82 @@ export default function App() {
             )}
 
             <div className="paste-box">
-              <h3>Paste enemies</h3>
+              <h3>Paste enemies / nick lookup</h3>
               <p className="help">
-                Paste enemy account IDs / Steam64 / OpenDota links when the lobby is up — no Overwolf needed.
+                IDs and OpenDota links are exact. Nicks are fuzzy — we search OpenDota and show avatars so you can
+                match the face from the lobby. Better than nothing, not guaranteed.
               </p>
               <textarea
                 value={enemyPaste}
                 onChange={(e) => setEnemyPaste(e.target.value)}
-                placeholder={'86745912\nhttps://www.opendota.com/players/…'}
+                placeholder={'86745912\nMiracle-\nhttps://www.opendota.com/players/…'}
                 rows={3}
                 disabled={busy}
               />
-              <button type="button" className="primary" disabled={busy || !enemyPaste.trim()} onClick={handlePasteEnemies}>
-                {busy ? 'Loading…' : 'Load enemy intel'}
-              </button>
+              <div className="row">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy || !enemyPaste.trim()}
+                  onClick={handlePasteEnemies}
+                >
+                  {busy ? 'Loading…' : 'Load intel (IDs + nicks)'}
+                </button>
+                <button
+                  type="button"
+                  className="ghost"
+                  disabled={busy || !enemyPaste.trim()}
+                  onClick={handleSearchNickOnly}
+                >
+                  Search nick only
+                </button>
+              </div>
+
+              {nickHits.length > 0 && (
+                <div className="nick-hits">
+                  <h4>
+                    Candidates for “{nickSearchLabel}” — pick by avatar
+                  </h4>
+                  <ul>
+                    {nickHits.map((hit) => (
+                      <li key={hit.accountId}>
+                        <button
+                          type="button"
+                          className="nick-hit"
+                          disabled={busy}
+                          onClick={() => handlePickNickCandidate(hit)}
+                        >
+                          {hit.avatarfull ? (
+                            <img src={hit.avatarfull} alt="" />
+                          ) : (
+                            <span className="nick-hit-fallback">?</span>
+                          )}
+                          <span>
+                            <b>{hit.personaname}</b>
+                            <em>ID {hit.accountId}</em>
+                          </span>
+                        </button>
+                        <div className="links">
+                          <a
+                            href={`https://www.dotabuff.com/players/${hit.accountId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Dotabuff
+                          </a>
+                          <a
+                            href={`https://www.opendota.com/players/${hit.accountId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            OpenDota
+                          </a>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </section>
         )}
@@ -954,7 +1197,15 @@ function PlayerList({ players, showRecent }: { players: CheckedPlayer[]; showRec
             className={p.familiar ? 'familiar' : p.isOwner ? 'you' : p.role === 'enemy' ? 'foe' : ''}
           >
             <div className="line">
-              <div>
+              <div className="line-with-avatar">
+                {p.profile?.avatarfull || p.familiar?.avatar ? (
+                  <img
+                    className="player-avatar"
+                    src={p.profile?.avatarfull || p.familiar?.avatar}
+                    alt=""
+                  />
+                ) : null}
+                <div>
                 <b>
                   {p.isOwner
                     ? `${p.personaname || 'You'} (you)`
@@ -970,6 +1221,7 @@ function PlayerList({ players, showRecent }: { players: CheckedPlayer[]; showRec
                   {p.accountId ? p.accountId : 'ID hidden until after picks'}
                   {p.role === 'enemy' ? ' · enemy' : p.role === 'ally' ? ' · ally' : ''}
                 </span>
+                </div>
               </div>
               {p.familiar && <FamiliarBadge rec={p.familiar} />}
               {!p.familiar && !p.isOwner && p.accountId && <span className="badge new">New to you</span>}

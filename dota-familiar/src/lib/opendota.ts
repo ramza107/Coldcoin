@@ -60,14 +60,34 @@ async function api<T>(path: string): Promise<T> {
 }
 
 export async function searchPlayers(q: string): Promise<PlayerProfile[]> {
+  const query = q.trim()
+  if (!query) return []
   const data = await api<Array<{ account_id: number; personaname: string; avatarfull?: string }>>(
-    `/search?q=${encodeURIComponent(q)}`,
+    `/search?q=${encodeURIComponent(query)}`,
   )
-  return data.slice(0, 8).map((p) => ({
-    accountId: p.account_id,
-    personaname: p.personaname,
-    avatarfull: p.avatarfull,
-  }))
+  const needle = query.toLowerCase()
+  return data
+    .slice(0, 16)
+    .map((p) => ({
+      accountId: p.account_id,
+      personaname: p.personaname,
+      avatarfull: p.avatarfull,
+    }))
+    .sort((a, b) => {
+      const an = a.personaname.toLowerCase()
+      const bn = b.personaname.toLowerCase()
+      const aExact = an === needle ? 0 : an.startsWith(needle) ? 1 : 2
+      const bExact = bn === needle ? 0 : bn.startsWith(needle) ? 1 : 2
+      return aExact - bExact
+    })
+}
+
+/** Prefer exact nick among search hits; otherwise leave for manual pick. */
+export function bestExactNickHit(hits: PlayerProfile[], nick: string): PlayerProfile | null {
+  const needle = nick.trim().toLowerCase()
+  if (!needle) return null
+  const exact = hits.filter((h) => h.personaname.toLowerCase() === needle)
+  return exact.length === 1 ? exact[0] : null
 }
 
 export async function fetchPlayer(accountId: AccountId): Promise<PlayerProfile> {
