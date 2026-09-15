@@ -1,0 +1,77 @@
+@echo off
+setlocal EnableExtensions
+cd /d "%~dp0"
+title ReplayFace Mini Client
+color 0A
+
+echo.
+echo ========================================
+echo   ReplayFace Mini Client
+echo ========================================
+echo.
+echo Folder: %CD%
+echo.
+
+if not exist "dist\index.html" (
+  echo [ERROR] dist\index.html not found.
+  echo Unzip the FULL archive. Do not run from inside a nested wrong folder.
+  echo.
+  pause
+  exit /b 1
+)
+
+if not exist "companion\server.mjs" (
+  echo [ERROR] companion\server.mjs not found.
+  pause
+  exit /b 1
+)
+
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Node.js not found in PATH.
+  echo Install from https://nodejs.org/  ^(LTS^) then RESTART the PC
+  echo or reopen this window after install.
+  echo.
+  pause
+  exit /b 1
+)
+
+for /f "delims=" %%i in ('where node') do (
+  echo Node: %%i
+  goto :node_found
+)
+:node_found
+node -v
+echo.
+
+echo Starting companion on http://127.0.0.1:17321/
+echo Keep this window OPEN while playing.
+echo Log file: companion-run.log
+echo.
+
+REM kill old instance on same port if any (best effort)
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":17321" ^| findstr "LISTENING"') do (
+  echo Stopping old process on 17321 PID %%p
+  taskkill /F /PID %%p >nul 2>nul
+)
+
+echo ----- %DATE% %TIME% ----- > companion-run.log
+echo Starting... >> companion-run.log
+
+start "" "http://127.0.0.1:17321/"
+
+node companion\server.mjs >> companion-run.log 2>&1
+set ERR=%ERRORLEVEL%
+
+echo.
+echo Companion stopped. Exit code: %ERR%
+echo.
+if not "%ERR%"=="0" (
+  echo [ERROR] Server failed. Last log lines:
+  echo ----------------------------------------
+  powershell -NoProfile -Command "Get-Content -Path 'companion-run.log' -Tail 40"
+  echo ----------------------------------------
+)
+echo.
+pause
+exit /b %ERR%

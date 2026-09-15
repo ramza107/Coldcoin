@@ -1,0 +1,18 @@
+ReplayFace Mini Client
+======================
+
+Need: Node.js LTS — https://nodejs.org/
+      Overwolf — https://www.overwolf.com/
+
+Windows (simplest):
+  1. Unzip this folder
+  2. Double-click start.bat
+  3. Browser opens http://127.0.0.1:17321/
+  4. mini-client\install-gsi.bat  (once)
+  5. Steam → Dota → Launch Options: -gamestateintegration
+  6. mini-client\open-overwolf-app.bat → Load unpacked in Overwolf
+  7. Connect your profile once in the web UI → Live lobby ON
+
+No npm build is required — dist\ is already included.
+
+Legal: Dota GSI + Overwolf GEP only. No cheats / memory inject.
