@@ -482,6 +482,30 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
+    // Proxy OpenDota so the browser UI on 127.0.0.1 can sync profiles reliably
+    if (method === 'GET' && url.pathname.startsWith('/opendota')) {
+      const apiPath = url.pathname.replace(/^\/opendota/, '/api') + url.search
+      const target = `https://api.opendota.com${apiPath}`
+      try {
+        const upstream = await fetch(target, {
+          headers: { Accept: 'application/json', 'User-Agent': 'ReplayFace-Companion/1.0' },
+        })
+        const text = await upstream.text()
+        cors(res, req)
+        res.writeHead(upstream.status, {
+          'Content-Type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+        })
+        res.end(text)
+      } catch (e) {
+        sendJson(res, req, 502, {
+          error: 'OpenDota proxy failed',
+          detail: e instanceof Error ? e.message : String(e),
+        })
+      }
+      return
+    }
+
     if (method === 'GET' && url.pathname === '/status') {
       cors(res, req)
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })

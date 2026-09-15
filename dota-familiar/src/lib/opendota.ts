@@ -39,10 +39,24 @@ export async function resolveAccountId(input: string): Promise<AccountId> {
 }
 
 async function api<T>(path: string): Promise<T> {
-  const base = import.meta.env.DEV ? '/opendota' : 'https://api.opendota.com/api'
-  const res = await fetch(`${base}${path}`)
-  if (!res.ok) throw new Error(`OpenDota error ${res.status}`)
-  return res.json() as Promise<T>
+  const host = typeof window !== 'undefined' ? window.location.hostname : ''
+  const local = host === '127.0.0.1' || host === 'localhost'
+  const base = import.meta.env.DEV || local ? '/opendota' : 'https://api.opendota.com/api'
+
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 25000)
+  try {
+    const res = await fetch(`${base}${path}`, { signal: ctrl.signal, cache: 'no-store' })
+    if (!res.ok) throw new Error(`OpenDota error ${res.status}`)
+    return (await res.json()) as T
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      throw new Error('OpenDota timeout — check internet / companion proxy')
+    }
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export async function searchPlayers(q: string): Promise<PlayerProfile[]> {
