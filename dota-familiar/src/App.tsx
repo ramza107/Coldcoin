@@ -201,6 +201,7 @@ export default function App() {
   const indexRef = useRef<FamiliarIndex | null>(null)
   const bootRef = useRef(false)
   const lobbySigRef = useRef('')
+  const pendingLobbyRef = useRef<LiveLobby | null>(null)
   const enrichingRef = useRef(false)
 
   useEffect(() => {
@@ -210,7 +211,10 @@ export default function App() {
   const applyLobby = useCallback(async (next: LiveLobby, current: FamiliarIndex) => {
     const sig = lobbySignature(next)
     if (sig === lobbySigRef.current) return
-    if (enrichingRef.current) return
+    if (enrichingRef.current) {
+      pendingLobbyRef.current = next
+      return
+    }
     enrichingRef.current = true
     lobbySigRef.current = sig
     setLobby(next)
@@ -228,6 +232,11 @@ export default function App() {
       setLastCheckedAt(Date.now())
     } finally {
       enrichingRef.current = false
+      const pending = pendingLobbyRef.current
+      pendingLobbyRef.current = null
+      if (pending && lobbySignature(pending) !== lobbySigRef.current) {
+        void applyLobby(pending, indexRef.current || current)
+      }
     }
   }, [])
 
@@ -465,10 +474,13 @@ export default function App() {
     setLivePlayers([])
     setLobby(null)
     setActiveMatchId(null)
+    lobbySigRef.current = ''
+    pendingLobbyRef.current = null
     setWatch(false)
     saveWatchEnabled(false)
     setTab('sync')
     setStatus('Cleared local data')
+    void fetch(`${companionUrl.replace(/\/$/, '')}/lobby`, { method: 'DELETE' }).catch(() => {})
   }
 
   const liveEnemies = livePlayers.filter((p) => p.role === 'enemy')

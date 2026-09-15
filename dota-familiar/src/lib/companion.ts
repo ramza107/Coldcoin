@@ -27,8 +27,10 @@ export async function fetchCompanionHealth(baseUrl = DEFAULT_COMPANION_URL): Pro
 export function lobbySignature(lobby: LiveLobby | null): string {
   if (!lobby) return ''
   return [
-    lobby.updatedAt,
+    lobby.source,
+    lobby.matchId ?? '',
     lobby.myTeam,
+    lobby.awaitingRoster ? '1' : '0',
     lobby.players.map((p) => `${p.accountId}:${p.heroId}:${p.team}`).join(','),
   ].join('|')
 }

@@ -200,10 +200,21 @@ function handleGsi(body) {
   const map = body?.map || {}
   const state = map.game_state || body?.player?.activity || ''
   lastGsiState = String(state)
+  const incomingMatchId = map.matchid != null && map.matchid !== '' ? Number(map.matchid) : null
 
   const started =
     /PRE_GAME|GAME_IN_PROGRESS|POST_GAME|STRATEGY_TIME|TEAM_SHOWCASE/i.test(lastGsiState) ||
     map.clock_time != null
+
+  // New match id → drop previous roster so Live lobby cannot show last game's enemies
+  if (
+    incomingMatchId != null &&
+    lobby?.matchId != null &&
+    incomingMatchId !== lobby.matchId
+  ) {
+    lobby = null
+    matchStartedAt = null
+  }
 
   if (started && !matchStartedAt) {
     matchStartedAt = Date.now()
@@ -215,8 +226,14 @@ function handleGsi(body) {
   const localTeam = body?.player?.team_name
   const heroId = body?.hero?.id
 
+  const preferKeep =
+    lobby &&
+    (lobby.source === 'overwolf' || lobby.source === 'paste' || lobby.source === 'manual' || lobby.source === 'file') &&
+    !lobby.awaitingRoster &&
+    lobby.enemies?.length > 0
+
   const allplayers = body?.allplayers
-  if (allplayers && typeof allplayers === 'object') {
+  if (allplayers && typeof allplayers === 'object' && !preferKeep) {
     const players = Object.values(allplayers).map((p) =>
       normalizePlayer({
         steamid: p.steamid,
@@ -225,18 +242,20 @@ function handleGsi(body) {
         hero: p.heroid ?? p.hero?.id,
       }),
     )
+    const withIds = players.filter((p) => p?.accountId)
     const normalized = normalizeLobby(
       {
         players,
         myTeam: localTeam,
         ownerSteamId: localSteam,
-        matchId: map.matchid,
+        matchId: incomingMatchId,
         gameState: lastGsiState,
         source: 'gsi',
       },
       'gsi',
     )
-    if (normalized && normalized.players.filter((p) => p.accountId).length >= 2) {
+    // Only adopt GSI allplayers when it looks like a full lobby (5v5-ish)
+    if (normalized && withIds.length >= 8) {
       lobby = normalized
       persistLobby()
       return { ok: true, players: normalized.players.length, source: 'gsi-allplayers' }
@@ -257,32 +276,41 @@ function handleGsi(body) {
       me.isOwner = true
       stubPlayers.push(me)
     }
-    if (!lobby || lobby.players.length < 2) {
-      lobby = {
-        source: 'gsi',
-        updatedAt: Date.now(),
-        matchStartedAt: matchStartedAt || Date.now(),
-        matchId: map.matchid != null ? Number(map.matchid) : null,
-        gameState: lastGsiState,
-        myTeam: localTeam?.toLowerCase()?.includes('dire') ? 'dire' : 'radiant',
-        players: stubPlayers,
-        enemies: [],
-        allies: stubPlayers,
-        awaitingRoster: true,
+    if (!lobby || lobby.awaitingRoster || lobby.players.length < 2) {
+      // Do not clobber a richer Overwolf/paste roster
+      if (preferKeep) {
+        lobby = {
+          ...lobby,
+          gameState: lastGsiState,
+          matchId: incomingMatchId ?? lobby.matchId,
+          // intentionally no updatedAt bump for heartbeat — web sig ignores it
+        }
+      } else {
+        lobby = {
+          source: 'gsi',
+          updatedAt: Date.now(),
+          matchStartedAt: matchStartedAt || Date.now(),
+          matchId: incomingMatchId,
+          gameState: lastGsiState,
+          myTeam: localTeam?.toLowerCase()?.includes('dire') ? 'dire' : 'radiant',
+          players: stubPlayers,
+          enemies: [],
+          allies: stubPlayers,
+          awaitingRoster: true,
+        }
+        persistLobby()
       }
-      persistLobby()
     } else {
       lobby = {
         ...lobby,
         gameState: lastGsiState,
-        matchId: map.matchid != null ? Number(map.matchid) : lobby.matchId,
-        updatedAt: Date.now(),
+        matchId: incomingMatchId ?? lobby.matchId,
       }
     }
   }
 
   if (/POST_GAME|DOTA_GAMERULES_STATE_POST_GAME/i.test(lastGsiState)) {
-    // keep lobby briefly for review; clear after idle
+    // keep lobby briefly for review
   }
 
   return { ok: true, gameState: lastGsiState, awaitingRoster: Boolean(lobby?.awaitingRoster) }
