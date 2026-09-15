@@ -26,7 +26,8 @@ Dota client → Overwolf GEP (roster after STRATEGY_TIME)
 
 ## Compliance
 
-Valve hides `steamId` / `name` during the pick/ban phase. This app only pushes when match state is `STRATEGY_TIME` or later.
+At **connect / hero select**, Valve empties `steamId` and `name`. Overwolf can still show slots, ranks, medals.
+Full identity (and OpenDota familiar lookup) only after **`STRATEGY_TIME`**. This app never invents hidden IDs.
 
 ## Files
 

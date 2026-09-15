@@ -141,12 +141,17 @@ async function enrichLobbyPlayers(
       accountId: p.accountId,
       personaname: p.personaname || profile?.personaname,
       heroId: p.heroId,
+      hero: p.hero,
       team: p.team,
       isOwner,
       familiar,
       profile,
       recentMatches,
       role,
+      rank: p.rank,
+      medalName: p.medalName,
+      medalStars: p.medalStars,
+      slotIndex: p.slotIndex,
     })
   }
   return out
@@ -224,8 +229,8 @@ export default function App() {
       const enemyFamiliar = enriched.filter((p) => p.role === 'enemy' && p.familiar).length
       const enemyTotal = enriched.filter((p) => p.role === 'enemy').length
       setStatus(
-        next.awaitingRoster
-          ? `Match live (${next.gameState || 'in game'}) — waiting for enemy roster (Overwolf / paste)`
+        next.awaitingIds || next.awaitingRoster
+          ? `Match ${next.phase || 'live'} · Valve hides Steam IDs until after picks — showing ranks/slots now`
           : `Live lobby · ${enemyTotal} enemies · ${enemyFamiliar} familiar`,
       )
       setTab('live')
@@ -659,20 +664,28 @@ export default function App() {
               />
             </label>
 
-            {lobby?.awaitingRoster && (
+            {lobby?.awaitingIds && (
               <div className="banner ok">
-                Match detected. Enemy IDs appear after picks (Overwolf roster) or paste them below.
+                Connect/draft phase: ranks & medals can appear, but Steam IDs (familiar + OpenDota history) only after
+                picks end (<code>STRATEGY_TIME</code>) — Valve rule, same for every Overwolf app.
+              </div>
+            )}
+            {lobby?.awaitingRoster && !lobby?.awaitingIds && (
+              <div className="banner ok">
+                Match detected. Waiting for full enemy roster…
               </div>
             )}
 
             {liveEnemies.length > 0 ? (
               <div className="enemy-focus">
-                <h3>Enemies now</h3>
-                <PlayerList players={liveEnemies} showRecent />
+                <h3>{lobby?.awaitingIds ? 'Enemy slots (pre-ID)' : 'Enemies now'}</h3>
+                <PlayerList players={liveEnemies} showRecent={!lobby?.awaitingIds} />
               </div>
             ) : (
               <p className="help" style={{ marginTop: '0.8rem' }}>
-                No enemies yet. Start a match with the companion running, or paste IDs.
+                {lobby?.phase === 'connecting'
+                  ? 'Connected to match — waiting for roster slots from Overwolf…'
+                  : 'No enemies yet. Start a match with companion + Overwolf, or paste IDs.'}
               </p>
             )}
 
@@ -819,24 +832,38 @@ function PlayerList({ players, showRecent }: { players: CheckedPlayer[]; showRec
                 <b>
                   {p.isOwner
                     ? `${p.personaname || 'You'} (you)`
-                    : p.personaname || 'Anonymous / private'}
+                    : p.personaname ||
+                      (p.medalName
+                        ? `Enemy · ${p.medalName}${p.medalStars ? ` ${p.medalStars}` : ''}`
+                        : p.accountId
+                          ? 'Anonymous / private'
+                          : `Enemy slot${p.slotIndex != null ? ` #${p.slotIndex}` : ''}`)}
                 </b>
                 <span className="id">
-                  {p.heroId ? `Hero #${p.heroId} · ` : ''}
-                  {p.accountId ? p.accountId : 'no account'}
+                  {p.hero ? `${p.hero} · ` : p.heroId ? `Hero #${p.heroId} · ` : ''}
+                  {p.accountId ? p.accountId : 'ID hidden until after picks'}
                   {p.role === 'enemy' ? ' · enemy' : p.role === 'ally' ? ' · ally' : ''}
                 </span>
               </div>
               {p.familiar && <FamiliarBadge rec={p.familiar} />}
               {!p.familiar && !p.isOwner && p.accountId && <span className="badge new">New to you</span>}
+              {!p.familiar && !p.isOwner && !p.accountId && (
+                <span className="badge new">Waiting for Steam ID</span>
+              )}
             </div>
 
             <div className="stats-grid">
               <div>
                 <em>Career</em>
-                <strong>{p.profile?.rankTier != null ? rankLabel(p.profile.rankTier) : '—'}</strong>
+                <strong>
+                  {p.profile?.rankTier != null
+                    ? rankLabel(p.profile.rankTier)
+                    : p.medalName
+                      ? `${p.medalName}${p.medalStars ? ` ${p.medalStars}` : ''}`
+                      : '—'}
+                </strong>
                 <span>
-                  {wr ? `${wr} WR` : 'WR n/a'}
+                  {wr ? `${wr} WR` : p.rank != null ? `OW rank ${p.rank}` : 'WR n/a'}
                   {games != null ? ` · ${games} games` : ''}
                 </span>
               </div>

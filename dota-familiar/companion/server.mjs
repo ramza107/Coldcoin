@@ -88,17 +88,45 @@ function normalizePlayer(raw, fallbackTeam) {
   if (raw.isRadiant === true) team = 'radiant'
   if (raw.isRadiant === false) team = 'dire'
 
-  const heroId = Number(raw.heroId ?? raw.hero_id ?? raw.hero ?? 0) || 0
+  const heroRaw = raw.heroId ?? raw.hero_id ?? raw.hero
+  const heroId = typeof heroRaw === 'number' || /^\d+$/.test(String(heroRaw || '')) ? Number(heroRaw) : 0
+  const hero = typeof heroRaw === 'string' && !/^\d+$/.test(heroRaw) ? heroRaw : raw.heroName
   const personaname = raw.personaname || raw.name || raw.playerName || undefined
+  const medalName = raw.medalName || raw.medal_name || undefined
+  const medalStars =
+    raw.medalStars != null
+      ? Number(raw.medalStars)
+      : raw.medal_stars != null
+        ? Number(raw.medal_stars)
+        : null
+  const rank = raw.rank != null ? Number(raw.rank) : null
+  const slotIndex =
+    raw.slotIndex != null
+      ? Number(raw.slotIndex)
+      : raw.team_slot != null
+        ? Number(raw.team_slot)
+        : raw.index != null
+          ? Number(raw.index)
+          : raw.player_index != null
+            ? Number(raw.player_index)
+            : null
 
-  if (!accountId && !personaname && !heroId) return null
+  // Keep anonymous draft slots (rank/medal only — Valve hides Steam IDs until STRATEGY_TIME)
+  if (!accountId && !personaname && !heroId && !hero && rank == null && !medalName && slotIndex == null) {
+    return null
+  }
   return {
     accountId: accountId && Number.isFinite(accountId) ? accountId : null,
     personaname,
-    heroId,
+    heroId: heroId || 0,
+    hero,
     team: team || 'radiant',
     steamId: raw.steamId ?? raw.steamid ?? undefined,
     isOwner: Boolean(raw.isOwner || raw.is_local || raw.isLocal),
+    rank: Number.isFinite(rank) ? rank : null,
+    medalName,
+    medalStars: Number.isFinite(medalStars) ? medalStars : null,
+    slotIndex: Number.isFinite(slotIndex) ? slotIndex : null,
   }
 }
 
@@ -159,6 +187,8 @@ function normalizeLobby(input, source) {
 
   const enemies = players.filter((p) => p.team !== myTeam && !p.isOwner)
   const allies = players.filter((p) => p.team === myTeam)
+  const withIds = players.filter((p) => p.accountId).length
+  const awaitingIds = Boolean(input.awaitingIds) || (players.length >= 2 && withIds < 2)
 
   return {
     source: source || input.source || 'manual',
@@ -170,6 +200,9 @@ function normalizeLobby(input, source) {
     players,
     enemies,
     allies,
+    awaitingRoster: Boolean(input.awaitingRoster) || awaitingIds,
+    awaitingIds,
+    phase: input.phase || null,
   }
 }
 

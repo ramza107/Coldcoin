@@ -66,15 +66,26 @@ export interface CheckedPlayer extends MatchPlayer {
   profile?: PlayerProfile | null
   recentMatches?: RecentMatchBrief[]
   role?: 'enemy' | 'ally' | 'you'
+  rank?: number | null
+  medalName?: string
+  medalStars?: number | null
+  slotIndex?: number | null
+  hero?: string
 }
 
 export interface LiveLobbyPlayer {
   accountId: AccountId | null
   personaname?: string
   heroId: number
+  hero?: string
   team: 'radiant' | 'dire'
   steamId?: string
   isOwner?: boolean
+  /** Competitive rank number from Overwolf (when IDs are still hidden). */
+  rank?: number | null
+  medalName?: string
+  medalStars?: number | null
+  slotIndex?: number | null
 }
 
 export interface LiveLobby {
@@ -87,7 +98,11 @@ export interface LiveLobby {
   players: LiveLobbyPlayer[]
   enemies: LiveLobbyPlayer[]
   allies: LiveLobbyPlayer[]
+  /** True while Valve still hides Steam IDs (connect / hero select). */
   awaitingRoster?: boolean
+  /** True when we have slots/ranks but not account IDs yet. */
+  awaitingIds?: boolean
+  phase?: 'connecting' | 'draft' | 'strategy' | 'live' | 'unknown'
 }
 
 export interface CompanionLobbyResponse {

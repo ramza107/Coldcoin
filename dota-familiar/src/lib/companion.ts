@@ -30,7 +30,14 @@ export function lobbySignature(lobby: LiveLobby | null): string {
     lobby.source,
     lobby.matchId ?? '',
     lobby.myTeam,
+    lobby.phase ?? '',
     lobby.awaitingRoster ? '1' : '0',
-    lobby.players.map((p) => `${p.accountId}:${p.heroId}:${p.team}`).join(','),
+    lobby.awaitingIds ? '1' : '0',
+    lobby.players
+      .map(
+        (p) =>
+          `${p.accountId}:${p.heroId}:${p.hero || ''}:${p.team}:${p.rank ?? ''}:${p.medalName || ''}`,
+      )
+      .join(','),
   ].join('|')
 }

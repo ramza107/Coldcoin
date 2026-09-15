@@ -21,8 +21,8 @@ const ui = {
 
 let lastMatchState = ''
 let lastPushSig = ''
-let lastLobby = null
-let gepReady = false
+let _lastLobby = null
+let _gepReady = false
 
 function log(msg) {
   const line = `[${new Date().toLocaleTimeString()}] ${msg}`
@@ -52,9 +52,22 @@ function teamFrom(value) {
   return null
 }
 
-function canRevealRoster(matchState) {
+function canRevealIds(matchState) {
   const s = String(matchState || '').toUpperCase()
   return /STRATEGY_TIME|TEAM_SHOWCASE|PRE_GAME|GAME_IN_PROGRESS|POST_GAME/.test(s)
+}
+
+function phaseFrom(matchState) {
+  const s = String(matchState || '').toUpperCase()
+  if (/INIT|PLAYER_DRAFT|WAIT_FOR_PLAYERS_TO_LOAD|WAIT_FOR_MAP|CUSTOM_GAME_SETUP/.test(s)) return 'connecting'
+  if (/HERO_SELECTION|STRATEGY_TIME/.test(s) && !/TEAM_SHOWCASE|PRE_GAME|GAME_IN_PROGRESS/.test(s)) {
+    if (/STRATEGY_TIME/.test(s)) return 'strategy'
+    return 'draft'
+  }
+  if (/STRATEGY_TIME/.test(s)) return 'strategy'
+  if (/TEAM_SHOWCASE|PRE_GAME|GAME_IN_PROGRESS|POST_GAME/.test(s)) return 'live'
+  if (/HERO_SELECTION/.test(s)) return 'draft'
+  return 'unknown'
 }
 
 function parseMaybeJson(value) {
@@ -97,65 +110,105 @@ function extractMe(info) {
   }
 }
 
+function mapPlayer(p, me, idsAllowed) {
+  const steamId = p.steamId || p.steam_id || p.steamid
+  const accountId = idsAllowed ? steam64ToAccountId(steamId) : null
+  const team = teamFrom(p.team) || teamFrom(p.teamId) || teamFrom(p.team_name)
+  const heroRaw = p.hero
+  const heroId = Number(p.heroId || p.hero_id || 0) || 0
+  return {
+    accountId: idsAllowed ? accountId : null,
+    // Never forward name/steamId before STRATEGY_TIME (Valve)
+    steamId: idsAllowed && steamId ? String(steamId) : undefined,
+    personaname: idsAllowed ? p.name || p.personaname || p.playerName : undefined,
+    heroId,
+    hero: typeof heroRaw === 'string' ? heroRaw : undefined,
+    team: team || 'radiant',
+    isOwner: Boolean(idsAllowed && me.steamId && steamId && String(steamId) === String(me.steamId)),
+    rank: p.rank != null ? Number(p.rank) : null,
+    medalName: p.medal_name || p.medalName,
+    medalStars: p.medal_stars != null ? Number(p.medal_stars) : null,
+    slotIndex:
+      p.team_slot != null
+        ? Number(p.team_slot)
+        : p.player_index != null
+          ? Number(p.player_index)
+          : p.index != null
+            ? Number(p.index)
+            : null,
+  }
+}
+
 function buildLobby(info) {
   const matchState = extractMatchState(info)
   lastMatchState = String(matchState)
-  if (!canRevealRoster(matchState)) {
-    return {
-      blocked: true,
-      matchState: lastMatchState,
-      reason: 'Waiting for STRATEGY_TIME (IDs hidden during draft)',
-    }
-  }
-
+  const phase = phaseFrom(matchState)
+  const idsAllowed = canRevealIds(matchState)
   const me = extractMe(info)
   const rawPlayers = extractPlayers(info)
-  const players = rawPlayers
-    .map((p) => {
-      const steamId = p.steamId || p.steam_id || p.steamid
-      const accountId = steam64ToAccountId(steamId)
-      const team = teamFrom(p.team) || teamFrom(p.teamId) || teamFrom(p.team_name)
-      return {
-        accountId,
-        steamId: steamId ? String(steamId) : undefined,
-        personaname: p.name || p.personaname || p.playerName,
-        heroId: Number(p.heroId || p.hero_id || 0) || 0,
-        hero: typeof p.hero === 'string' ? p.hero : undefined,
-        team: team || 'radiant',
-        isOwner: Boolean(
-          me.steamId && steamId && String(steamId) === String(me.steamId),
-        ),
-        rank: p.rank,
-        medal_name: p.medal_name,
-      }
-    })
-    .filter((p) => p.accountId || p.personaname)
 
-  const withIds = players.filter((p) => p.accountId)
-  if (withIds.length < 2) {
+  // Very early connect: match detected, roster may still be empty
+  if (!rawPlayers.length) {
+    if (!matchState) {
+      return { blocked: true, matchState: '', reason: 'No match yet' }
+    }
     return {
-      blocked: true,
-      matchState: lastMatchState,
-      reason: `Roster not ready (${withIds.length} Steam IDs)`,
+      blocked: false,
+      source: 'overwolf',
+      gameState: lastMatchState,
+      phase,
+      myTeam: me.team || 'radiant',
+      ownerSteamId: idsAllowed ? me.steamId : undefined,
+      matchStartedAt: Date.now(),
+      players: [],
+      enemies: [],
+      allies: [],
+      awaitingRoster: true,
+      awaitingIds: true,
     }
   }
 
-  const owner = players.find((p) => p.isOwner)
+  const players = rawPlayers.map((p) => mapPlayer(p, me, idsAllowed))
+  // During draft Overwolf may leave team=0; still keep slots for rank/medal UI
+  const usable = players.filter(
+    (p) =>
+      p.accountId ||
+      p.personaname ||
+      p.heroId ||
+      p.hero ||
+      p.rank != null ||
+      p.medalName ||
+      p.slotIndex != null,
+  )
+
+  if (!usable.length) {
+    return {
+      blocked: true,
+      matchState: lastMatchState,
+      reason: `Match ${phase} — roster empty`,
+    }
+  }
+
+  const owner = usable.find((p) => p.isOwner)
   const myTeam = owner?.team || me.team || 'radiant'
-  const enemies = players.filter((p) => p.team !== myTeam)
-  const allies = players.filter((p) => p.team === myTeam)
+  // If teams unknown during draft, treat non-owner as enemies for display slots
+  const enemies = usable.filter((p) => !p.isOwner && p.team !== myTeam)
+  const allies = usable.filter((p) => p.isOwner || p.team === myTeam)
+  const withIds = usable.filter((p) => p.accountId).length
 
   return {
     blocked: false,
     source: 'overwolf',
     gameState: lastMatchState,
+    phase,
     myTeam,
-    ownerSteamId: me.steamId,
+    ownerSteamId: idsAllowed ? me.steamId : undefined,
     matchStartedAt: Date.now(),
-    players,
-    enemies,
-    allies,
-    awaitingRoster: false,
+    players: usable,
+    enemies: enemies.length ? enemies : usable.filter((p) => !p.isOwner),
+    allies: allies.length ? allies : usable.filter((p) => p.isOwner),
+    awaitingRoster: withIds < 2,
+    awaitingIds: !idsAllowed || withIds < 2,
   }
 }
 
@@ -172,14 +225,20 @@ async function pushLobby(lobby) {
 
 function lobbySig(lobby) {
   if (!lobby || lobby.blocked) return ''
-  return lobby.players.map((p) => `${p.accountId}:${p.team}:${p.hero || p.heroId}`).join('|')
+  return [
+    lobby.phase,
+    lobby.awaitingIds ? '1' : '0',
+    lobby.players
+      .map((p) => `${p.accountId || ''}:${p.team}:${p.hero || p.heroId}:${p.rank || ''}:${p.medalName || ''}`)
+      .join('|'),
+  ].join('::')
 }
 
 async function maybePushFromInfo(info, force = false) {
   const lobby = buildLobby(info)
-  lastLobby = lobby
+  _lastLobby = lobby
   if (lobby.blocked) {
-    setPill(ui.pushPill, lobby.reason.slice(0, 42), 'wait')
+    setPill(ui.pushPill, String(lobby.reason || 'Blocked').slice(0, 42), 'wait')
     return
   }
   const sig = lobbySig(lobby)
@@ -187,12 +246,13 @@ async function maybePushFromInfo(info, force = false) {
   try {
     const result = await pushLobby(lobby)
     lastPushSig = sig
-    setPill(
-      ui.pushPill,
-      `Pushed ${lobby.enemies.length} enemies`,
-      'ok',
-    )
-    log(`Pushed roster · ${lobby.enemies.length} enemies · ${JSON.stringify(result)}`)
+    if (lobby.awaitingIds) {
+      setPill(ui.pushPill, `${lobby.phase || 'early'} · ranks only`, 'wait')
+      log(`Early lobby (${lobby.phase}) · IDs after STRATEGY_TIME · ${lobby.enemies.length} enemy slots`)
+    } else {
+      setPill(ui.pushPill, `Pushed ${lobby.enemies.length} enemies`, 'ok')
+      log(`Pushed roster · ${lobby.enemies.length} enemies · ${JSON.stringify(result)}`)
+    }
   } catch (e) {
     setPill(ui.pushPill, 'Companion offline', 'off')
     log(`Push failed: ${e.message || e}`)
