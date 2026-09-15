@@ -23,11 +23,13 @@ Open `http://localhost:5173`.
 npm run companion
 ```
 
-Then follow [`companion/README.md`](companion/README.md):
+Then:
 1. Dota launch option `-gamestateintegration`
-2. Copy GSI cfg into the Dota `gamestate_integration` folder
-3. After picks, Overwolf bridge (or paste) supplies enemy Steam IDs
+2. Copy GSI cfg (see [`companion/README.md`](companion/README.md))
+3. Load Overwolf app from [`overwolf-app/`](overwolf-app/) (unpacked) — pushes enemy Steam IDs after picks
 4. Web app → **Live lobby** → Listening ON
+
+OpenDota already has player stats; Overwolf only supplies **who is in your lobby**.
 
 ## Notes
 - Uses public [OpenDota](https://www.opendota.com) API.

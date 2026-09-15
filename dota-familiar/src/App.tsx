@@ -607,9 +607,8 @@ export default function App() {
               )}
             </div>
             <p className="fineprint">
-              Flow: Dota lobby → companion (Steam IDs after picks) → OpenDota lookup. Run{' '}
-              <code>node companion/server.mjs</code>, add <code>-gamestateintegration</code>, copy the GSI cfg. Overwolf
-              bridge or paste supplies enemy IDs — Valve hides them during draft.
+              Flow: Dota → Overwolf app (`overwolf-app/`) after picks → companion → OpenDota lookup. Run{' '}
+              <code>npm run companion</code>, add <code>-gamestateintegration</code>. Paste works without Overwolf.
             </p>
           </section>
         )}

@@ -1,0 +1,46 @@
+{
+  "manifest_version": 1,
+  "type": "WebApp",
+  "meta": {
+    "name": "ReplayFace Live",
+    "version": "0.1.0",
+    "minimum-overwolf-version": "0.170.0.0",
+    "author": "ReplayFace",
+    "icon": "icon.png",
+    "icon_gray": "icon_gray.png",
+    "description": "Pushes Dota live enemy Steam IDs to ReplayFace after picks (Valve-compliant)."
+  },
+  "permissions": ["GameInfo", "Hotkeys"],
+  "data": {
+    "start_window": "index",
+    "windows": {
+      "index": {
+        "file": "index.html",
+        "transparent": false,
+        "resizable": true,
+        "show_in_taskbar": true,
+        "size": { "width": 360, "height": 420 },
+        "min_size": { "width": 320, "height": 360 }
+      }
+    },
+    "game_targeting": {
+      "type": "dedicated",
+      "game_ids": [7314]
+    },
+    "game_events": [7314],
+    "launch_events": [
+      {
+        "event": "GameLaunch",
+        "event_data": { "game_ids": [7314] },
+        "start_minimized": false
+      }
+    ],
+    "hotkeys": {
+      "toggle_replayface": {
+        "title": "Show ReplayFace Live",
+        "action-type": "custom",
+        "default": "Ctrl+Shift+F"
+      }
+    }
+  }
+}

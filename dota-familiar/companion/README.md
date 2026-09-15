@@ -35,11 +35,20 @@ Leave it running. Status page: http://127.0.0.1:17321/
 
 GSI tells the companion that a match started. **Enemy Steam IDs are usually not in raw GSI** (Valve policy). For full enemy roster you need Overwolf GEP or a manual paste in the web UI.
 
-## 3. Full enemy roster (Overwolf)
+## 3. Full enemy roster (Overwolf) — yes, we can
 
-After hero picks end (strategy / pre-game), Overwolf GEP exposes `roster` with Steam IDs. Use `overwolf-bridge.js` inside an Overwolf app window — it POSTs to `http://127.0.0.1:17321/lobby`.
+Ship the app in [`../overwolf-app/`](../overwolf-app/):
+
+1. Install Overwolf, enable developer options, **Load unpacked** → `dota-familiar/overwolf-app`
+2. Keep this companion running
+3. Play Dota with `-gamestateintegration`
+4. After picks (`STRATEGY_TIME`), the Overwolf app POSTs roster here; the web Live lobby shows familiar enemies + OpenDota intel
+
+Same GEP path as other Dota overlays. A browser alone cannot do this.
 
 Do **not** show enemy IDs during the pick/ban phase (Valve / Overwolf rules).
+
+(Optional low-level stub: `overwolf-bridge.js`.)
 
 ## 4. Open ReplayFace
 
