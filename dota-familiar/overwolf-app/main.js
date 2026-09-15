@@ -299,7 +299,7 @@ function setRequiredFeatures(attempt = 0) {
       else log(`Could not set features: ${info.reason || JSON.stringify(info)}`)
       return
     }
-    gepReady = true
+    _gepReady = true
     setPill(ui.gepPill, 'GEP ready', 'ok')
     log(`Features: ${(info.supportedFeatures || FEATURES).join(', ')}`)
     overwolf.games.events.getInfo((gi) => {

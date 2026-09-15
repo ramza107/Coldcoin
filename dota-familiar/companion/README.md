@@ -11,14 +11,16 @@ This companion solves (1): it gets enemy Steam IDs at match start (after picks) 
 
 Web pages alone cannot read the live Dota lobby.
 
-## 1. Run the companion
+## 1. Run the companion (serves the Live UI)
 
 ```bash
-cd dota-familiar/companion
-node server.mjs
+cd dota-familiar
+npm run companion
 ```
 
-Leave it running. Status page: http://127.0.0.1:17321/
+Open **http://127.0.0.1:17321/** — this is the Live UI (same origin as `/lobby`).
+
+Do **not** expect https://ramza107.github.io/Coldcoin/ to show the current game: browsers block GitHub Pages from reading localhost.
 
 ## 2. Enable Dota GSI (match-start signal)
 
@@ -50,12 +52,12 @@ Do **not** show enemy IDs during the pick/ban phase (Valve / Overwolf rules).
 
 (Optional low-level stub: `overwolf-bridge.js`.)
 
-## 4. Open ReplayFace
+## 4. Open ReplayFace Live UI
 
-1. Connect & sync your account once (builds the familiar index).
-2. Open **Live lobby**.
-3. Enable **Listen for live game**.
-4. When the companion has enemies, the page marks familiar foes and loads their OpenDota stats + recent matches.
+1. Open **http://127.0.0.1:17321/** (companion-hosted UI).
+2. Connect & sync your account once.
+3. Stay on **Live lobby** with Listening ON.
+4. When Overwolf/GSI pushes the lobby, enemies appear.
 
 ## Manual / test without Dota
 

@@ -9,6 +9,20 @@ const COMPANION_URL_KEY = 'dota-familiar:companion-url:v1'
 
 export const DEFAULT_COMPANION_URL = 'http://127.0.0.1:17321'
 
+/** Prefer same-origin when the UI is served by the companion itself. */
+export function resolveCompanionUrl(saved?: string | null): string {
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname, port } = window.location
+    if (
+      (hostname === '127.0.0.1' || hostname === 'localhost') &&
+      (port === '17321' || port === '')
+    ) {
+      return `${protocol}//${hostname}${port ? `:${port}` : ''}`
+    }
+  }
+  return saved || DEFAULT_COMPANION_URL
+}
+
 export function loadIndex(): FamiliarIndex | null {
   try {
     const raw = localStorage.getItem(KEY)
@@ -62,7 +76,7 @@ export function saveLiveListen(on: boolean) {
 }
 
 export function loadCompanionUrl(): string {
-  return localStorage.getItem(COMPANION_URL_KEY) || DEFAULT_COMPANION_URL
+  return resolveCompanionUrl(localStorage.getItem(COMPANION_URL_KEY))
 }
 
 export function saveCompanionUrl(url: string) {

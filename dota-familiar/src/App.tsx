@@ -404,6 +404,73 @@ export default function App() {
     }
   }
 
+  async function handleLoadDemoLobby() {
+    if (!index) return
+    setBusy(true)
+    setError('')
+    try {
+      // Prefer whatever companion already has; else push sample-like roster from familiar list
+      const data = await fetchCompanionLobby(companionUrl)
+      if (data?.lobby?.players?.length) {
+        lobbySigRef.current = ''
+        await applyLobby(data.lobby, index)
+        return
+      }
+      const familiar = Object.values(index.players).slice(0, 2)
+      const enemies = familiar.map((p, i) => ({
+        accountId: p.accountId,
+        personaname: p.personaname,
+        heroId: [44, 5][i] || 1,
+        team: 'dire' as const,
+      }))
+      const next = {
+        source: 'demo',
+        updatedAt: Date.now(),
+        matchStartedAt: Date.now(),
+        gameState: 'DOTA_GAMERULES_STATE_PRE_GAME',
+        phase: 'live' as const,
+        myTeam: 'radiant' as const,
+        players: [
+          {
+            accountId: index.ownerAccountId,
+            personaname: index.ownerName,
+            heroId: 1,
+            team: 'radiant' as const,
+            isOwner: true,
+          },
+          ...enemies,
+        ],
+        enemies,
+        allies: [
+          {
+            accountId: index.ownerAccountId,
+            personaname: index.ownerName,
+            heroId: 1,
+            team: 'radiant' as const,
+            isOwner: true,
+          },
+        ],
+        awaitingRoster: false,
+        awaitingIds: false,
+      }
+      try {
+        await fetch(`${companionUrl.replace(/\/$/, '')}/lobby`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(next),
+        })
+      } catch {
+        // optional
+      }
+      lobbySigRef.current = ''
+      await applyLobby(next, index)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Demo lobby failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handlePasteEnemies() {
     if (!index) return
     setError('')
@@ -645,12 +712,31 @@ export default function App() {
                 >
                   {liveListen ? 'Listening ON' : 'Listening OFF'}
                 </button>
+                <button type="button" className="ghost" disabled={busy || !companionOnline} onClick={handleLoadDemoLobby}>
+                  {busy ? 'Loading…' : 'Load current / demo lobby'}
+                </button>
               </div>
             </div>
 
             <div className={`companion-pill ${companionOnline ? 'up' : 'down'}`}>
               Companion {companionOnline ? 'online' : 'offline'} · {companionUrl}
             </div>
+
+            {!companionOnline && (
+              <div className="banner error">
+                Live game needs the local companion. GitHub Pages cannot read localhost.
+                <br />
+                On your PC: <code>npm run build && npm run companion</code> then open{' '}
+                <code>http://127.0.0.1:17321/</code> (this UI served locally).
+              </div>
+            )}
+
+            {companionOnline && !lobby && (
+              <div className="banner ok">
+                Companion online — waiting for Dota/Overwolf to push the current lobby. Start a match or click “Load
+                demo lobby”.
+              </div>
+            )}
 
             <label className="field">
               <span>Companion URL</span>

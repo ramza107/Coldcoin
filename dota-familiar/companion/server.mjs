@@ -3,15 +3,13 @@
  * ReplayFace live lobby companion
  *
  * Listens on http://127.0.0.1:17321
- * - GET  /health          → ok
- * - GET  /lobby           → current lobby (for the web app)
- * - POST /lobby           → push Overwolf / manual roster JSON
- * - DELETE /lobby         → clear
- * - POST /gsi             → Dota Game State Integration (match start signal)
- * - GET  /              → tiny status page
+ * - Serves the web UI from ../dist (same origin as /lobby — fixes GH Pages → localhost block)
+ * - GET  /health, /lobby
+ * - POST /lobby, /gsi
+ * - GET  /status — raw JSON debug page
  *
- * Valve hides enemy Steam IDs in raw GSI. After pick phase, Overwolf GEP
- * (or a manual paste) should POST /lobby with the roster.
+ * IMPORTANT: open http://127.0.0.1:17321/ for live games (not GitHub Pages).
+ * Browsers block https://…github.io from reading localhost.
  */
 
 import http from 'node:http'
@@ -23,14 +21,28 @@ const PORT = Number(process.env.RF_PORT || 17321)
 const HOST = process.env.RF_HOST || '127.0.0.1'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const LOBBY_FILE = path.join(__dirname, 'live-lobby.json')
+const DIST_DIR = path.join(__dirname, '..', 'dist')
 
-/** @type {import('../src/types').LiveLobby | null} */
+/** @type {any} */
 let lobby = null
 let lastGsiAt = 0
 let lastGsiState = ''
 let matchStartedAt = null
 
 const STEAM64_BASE = 76561197960265728n
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.map': 'application/json',
+}
 
 function steamToAccountId(steam) {
   if (steam == null || steam === '') return null
@@ -111,7 +123,6 @@ function normalizePlayer(raw, fallbackTeam) {
             ? Number(raw.player_index)
             : null
 
-  // Keep anonymous draft slots (rank/medal only — Valve hides Steam IDs until STRATEGY_TIME)
   if (!accountId && !personaname && !heroId && !hero && rank == null && !medalName && slotIndex == null) {
     return null
   }
@@ -130,13 +141,10 @@ function normalizePlayer(raw, fallbackTeam) {
   }
 }
 
-/**
- * Accept several shapes:
- * { players: [...] }
- * { roster: { "0": {...}, ... } }  // Overwolf-style
- * { enemies: [...], allies: [...], myTeam: "radiant" }
- * [ ...players ]
- */
+function flipTeam(team) {
+  return team === 'radiant' ? 'dire' : 'radiant'
+}
+
 function normalizeLobby(input, source) {
   if (!input) return null
   const now = Date.now()
@@ -150,9 +158,19 @@ function normalizeLobby(input, source) {
     players = input.players.map((p) => normalizePlayer(p)).filter(Boolean)
     myTeam = myTeam || input.myTeam || null
   } else if (input.roster && typeof input.roster === 'object') {
-    players = Object.values(input.roster)
-      .map((p) => normalizePlayer(p))
-      .filter(Boolean)
+    const rosterPlayers = input.roster.players ?? input.roster
+    const list = Array.isArray(rosterPlayers)
+      ? rosterPlayers
+      : typeof rosterPlayers === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(rosterPlayers)
+            } catch {
+              return []
+            }
+          })()
+        : Object.values(rosterPlayers || {})
+    players = list.map((p) => normalizePlayer(p)).filter(Boolean)
   } else if (input.enemies || input.allies) {
     const enemies = (input.enemies || []).map((p) =>
       normalizePlayer({ ...p, team: flipTeam(input.myTeam || 'radiant') }),
@@ -164,14 +182,29 @@ function normalizeLobby(input, source) {
     myTeam = input.myTeam || 'radiant'
   }
 
-  if (!players.length) return null
+  if (!players.length && !input.awaitingRoster) return null
+  if (!players.length) {
+    return {
+      source: source || input.source || 'manual',
+      updatedAt: now,
+      matchStartedAt: input.matchStartedAt || matchStartedAt || now,
+      matchId: matchId != null ? Number(matchId) : null,
+      gameState: input.gameState || lastGsiState || null,
+      myTeam: myTeam || 'radiant',
+      players: [],
+      enemies: [],
+      allies: [],
+      awaitingRoster: true,
+      awaitingIds: true,
+      phase: input.phase || 'connecting',
+    }
+  }
 
   if (!myTeam) {
     const owner = players.find((p) => p.isOwner)
     myTeam = owner?.team || players[0]?.team || 'radiant'
   }
 
-  // Mark owner if provided
   const ownerAccountId =
     input.ownerAccountId ??
     input.owner_account_id ??
@@ -179,7 +212,7 @@ function normalizeLobby(input, source) {
   if (ownerAccountId) {
     players = players.map((p) => ({
       ...p,
-      isOwner: p.accountId === ownerAccountId,
+      isOwner: p.accountId === ownerAccountId || p.isOwner,
     }))
     const me = players.find((p) => p.isOwner)
     if (me) myTeam = me.team
@@ -204,10 +237,6 @@ function normalizeLobby(input, source) {
     awaitingIds,
     phase: input.phase || null,
   }
-}
-
-function flipTeam(team) {
-  return team === 'radiant' ? 'dire' : 'radiant'
 }
 
 function persistLobby() {
@@ -236,24 +265,17 @@ function handleGsi(body) {
   const incomingMatchId = map.matchid != null && map.matchid !== '' ? Number(map.matchid) : null
 
   const started =
-    /PRE_GAME|GAME_IN_PROGRESS|POST_GAME|STRATEGY_TIME|TEAM_SHOWCASE/i.test(lastGsiState) ||
-    map.clock_time != null
+    /PRE_GAME|GAME_IN_PROGRESS|POST_GAME|STRATEGY_TIME|TEAM_SHOWCASE|HERO_SELECTION|INIT/i.test(
+      lastGsiState,
+    ) || map.clock_time != null
 
-  // New match id → drop previous roster so Live lobby cannot show last game's enemies
-  if (
-    incomingMatchId != null &&
-    lobby?.matchId != null &&
-    incomingMatchId !== lobby.matchId
-  ) {
+  if (incomingMatchId != null && lobby?.matchId != null && incomingMatchId !== lobby.matchId) {
     lobby = null
     matchStartedAt = null
   }
 
-  if (started && !matchStartedAt) {
-    matchStartedAt = Date.now()
-  }
+  if (started && !matchStartedAt) matchStartedAt = Date.now()
 
-  // Local player from GSI (enemy Steam IDs are usually absent)
   const localSteam = body?.player?.steamid
   const localName = body?.player?.name
   const localTeam = body?.player?.team_name
@@ -287,7 +309,6 @@ function handleGsi(body) {
       },
       'gsi',
     )
-    // Only adopt GSI allplayers when it looks like a full lobby (5v5-ish)
     if (normalized && withIds.length >= 8) {
       lobby = normalized
       persistLobby()
@@ -295,7 +316,6 @@ function handleGsi(body) {
     }
   }
 
-  // Keep a stub lobby so the web UI knows a match is live even without roster
   if (started) {
     const stubPlayers = []
     const me = normalizePlayer({
@@ -310,13 +330,11 @@ function handleGsi(body) {
       stubPlayers.push(me)
     }
     if (!lobby || lobby.awaitingRoster || lobby.players.length < 2) {
-      // Do not clobber a richer Overwolf/paste roster
       if (preferKeep) {
         lobby = {
           ...lobby,
           gameState: lastGsiState,
           matchId: incomingMatchId ?? lobby.matchId,
-          // intentionally no updatedAt bump for heartbeat — web sig ignores it
         }
       } else {
         lobby = {
@@ -330,6 +348,12 @@ function handleGsi(body) {
           enemies: [],
           allies: stubPlayers,
           awaitingRoster: true,
+          awaitingIds: true,
+          phase: /HERO_SELECTION/i.test(lastGsiState)
+            ? 'draft'
+            : /STRATEGY|PRE_GAME|GAME_IN_PROGRESS/i.test(lastGsiState)
+              ? 'live'
+              : 'connecting',
         }
         persistLobby()
       }
@@ -342,11 +366,45 @@ function handleGsi(body) {
     }
   }
 
-  if (/POST_GAME|DOTA_GAMERULES_STATE_POST_GAME/i.test(lastGsiState)) {
-    // keep lobby briefly for review
+  return { ok: true, gameState: lastGsiState, awaitingRoster: Boolean(lobby?.awaitingRoster) }
+}
+
+function safeJoin(root, reqPath) {
+  const decoded = decodeURIComponent(reqPath.split('?')[0])
+  const cleaned = path.normalize(decoded).replace(/^(\.\.[/\\])+/, '')
+  const full = path.join(root, cleaned)
+  if (!full.startsWith(root)) return null
+  return full
+}
+
+function serveStatic(req, res, pathname) {
+  if (!fs.existsSync(DIST_DIR)) {
+    cors(res, req)
+    res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' })
+    res.end(`<!doctype html><html><body style="font:15px system-ui;background:#0c1014;color:#e8eef5;padding:2rem">
+<h1>Build the web UI first</h1>
+<pre>cd dota-familiar && npm run build && npm run companion</pre>
+<p>API still works: <a href="/lobby" style="color:#9ec5ff">/lobby</a> · <a href="/status" style="color:#9ec5ff">/status</a></p>
+</body></html>`)
+    return true
   }
 
-  return { ok: true, gameState: lastGsiState, awaitingRoster: Boolean(lobby?.awaitingRoster) }
+  let rel = pathname === '/' ? '/index.html' : pathname
+  let filePath = safeJoin(DIST_DIR, rel)
+  if (!filePath || !fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+    // SPA fallback
+    filePath = path.join(DIST_DIR, 'index.html')
+  }
+  if (!fs.existsSync(filePath)) return false
+
+  const ext = path.extname(filePath)
+  cors(res, req)
+  res.writeHead(200, {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Cache-Control': ext === '.html' ? 'no-store' : 'public, max-age=3600',
+  })
+  fs.createReadStream(filePath).pipe(res)
+  return true
 }
 
 loadLobbyFile()
@@ -367,8 +425,10 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, req, 200, {
         ok: true,
         lobby: Boolean(lobby),
+        enemies: lobby?.enemies?.length || 0,
         lastGsiAt,
-        gameState: lastGsiState || null,
+        gameState: lastGsiState || lobby?.gameState || null,
+        ui: fs.existsSync(DIST_DIR),
       })
       return
     }
@@ -378,7 +438,7 @@ const server = http.createServer(async (req, res) => {
         lobby,
         companion: true,
         lastGsiAt: lastGsiAt || null,
-        gameState: lastGsiState || null,
+        gameState: lastGsiState || lobby?.gameState || null,
       })
       return
     }
@@ -402,11 +462,16 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, req, 400, { error: 'Need players / roster / enemies' })
         return
       }
-      next.awaitingRoster = false
+      // Keep awaitingIds from Overwolf early-phase pushes
       lobby = next
       matchStartedAt = next.matchStartedAt
       persistLobby()
-      sendJson(res, req, 200, { ok: true, enemies: next.enemies.length, allies: next.allies.length })
+      sendJson(res, req, 200, {
+        ok: true,
+        enemies: next.enemies.length,
+        allies: next.allies.length,
+        awaitingIds: Boolean(next.awaitingIds),
+      })
       return
     }
 
@@ -417,30 +482,25 @@ const server = http.createServer(async (req, res) => {
       return
     }
 
-    if (method === 'GET' && url.pathname === '/') {
+    if (method === 'GET' && url.pathname === '/status') {
       cors(res, req)
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
       res.end(`<!doctype html>
-<html><head><meta charset="utf-8"><title>ReplayFace companion</title>
+<html><head><meta charset="utf-8"><title>ReplayFace companion status</title>
 <style>
-body{font:15px/1.45 system-ui;background:#0c1014;color:#e8eef5;padding:2rem;max-width:40rem}
+body{font:15px/1.45 system-ui;background:#0c1014;color:#e8eef5;padding:2rem;max-width:44rem}
 code,pre{background:#141b22;padding:.2rem .4rem;border-radius:6px}
-a{color:#9ec5ff}
-.ok{color:#8af0bf}
+a{color:#9ec5ff}.ok{color:#8af0bf}
 </style></head><body>
-<h1>ReplayFace companion</h1>
-<p class="ok">Running on http://${HOST}:${PORT}</p>
-<p>Open the web app → <b>Live lobby</b> and enable listening.</p>
-<ul>
-<li><code>GET /lobby</code> — current enemies/allies</li>
-<li><code>POST /lobby</code> — push Overwolf roster JSON</li>
-<li><code>POST /gsi</code> — Dota GSI endpoint</li>
-</ul>
-<p>Copy <code>gamestate_integration_replayface.cfg</code> into your Dota GSI folder and add <code>-gamestateintegration</code> to Steam launch options.</p>
+<h1>Companion status</h1>
+<p class="ok">API http://${HOST}:${PORT}</p>
+<p><a href="/">Open Live UI (same origin)</a> — use this during games, not GitHub Pages.</p>
 <pre>${lobby ? JSON.stringify(lobby, null, 2) : 'No lobby yet'}</pre>
 </body></html>`)
       return
     }
+
+    if (method === 'GET' && serveStatic(req, res, url.pathname)) return
 
     sendJson(res, req, 404, { error: 'not found' })
   } catch (e) {
@@ -449,14 +509,15 @@ a{color:#9ec5ff}
 })
 
 server.listen(PORT, HOST, () => {
+  const hasUi = fs.existsSync(DIST_DIR)
   console.log(`ReplayFace companion http://${HOST}:${PORT}`)
-  console.log(`  GET  /lobby   — web app polls this`)
-  console.log(`  POST /lobby   — Overwolf / manual roster`)
-  console.log(`  POST /gsi     — Dota Game State Integration`)
-  console.log(`Drop live-lobby.json here to inject a roster: ${LOBBY_FILE}`)
+  console.log(`  UI     ${hasUi ? 'http://' + HOST + ':' + PORT + '/' : 'MISSING — run npm run build'}`)
+  console.log(`  GET  /lobby   — live roster`)
+  console.log(`  POST /lobby   — Overwolf / manual`)
+  console.log(`  POST /gsi     — Dota GSI`)
+  console.log(`Open the UI from this URL during matches (GitHub Pages cannot read localhost).`)
 })
 
-// Hot-reload lobby file (Overwolf bridge / scripts can write it)
 fs.watchFile(LOBBY_FILE, { interval: 1000 }, () => {
   try {
     if (!fs.existsSync(LOBBY_FILE)) return

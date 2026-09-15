@@ -19,17 +19,22 @@ npm run dev
 Open `http://localhost:5173`.
 
 ## Live enemies (Windows)
+
+**Do not use GitHub Pages for live lobby** — browsers block `github.io` → `localhost`.
+
 ```bash
 npm run companion
 ```
 
-Then:
+Then open **`http://127.0.0.1:17321/`** (UI is served by the companion).
+
+Also:
 1. Dota launch option `-gamestateintegration`
 2. Copy GSI cfg (see [`companion/README.md`](companion/README.md))
-3. Load Overwolf app from [`overwolf-app/`](overwolf-app/) (unpacked) — pushes enemy Steam IDs after picks
-4. Web app → **Live lobby** → Listening ON
+3. Load [`overwolf-app/`](overwolf-app/) in Overwolf
+4. Sync your account once on Connect tab
 
-OpenDota already has player stats; Overwolf only supplies **who is in your lobby**.
+GitHub Pages is fine for history/familiar after games; live match = local URL above.
 
 ## Notes
 - Uses public [OpenDota](https://www.opendota.com) API.
