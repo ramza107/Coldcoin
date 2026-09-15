@@ -1,6 +1,15 @@
 # ReplayFace live companion (Windows)
 
-Web pages cannot read your live Dota lobby. This tiny local server bridges **match-start roster → ReplayFace** so you see **enemies you already played with** as soon as the game starts (after picks).
+## How it works
+
+Two different things:
+
+1. **Who is in your game right now** — only your Dota client knows this (Steam IDs of the 10 players). OpenDota / Dotabuff / Stratz do **not** publish the roster of a normal ranked pub while it is live.
+2. **Everything about those players** — once you have Steam IDs, those databases already have rank, WR, recent matches, heroes, etc.
+
+This companion solves (1): it gets enemy Steam IDs at match start (after picks) and POSTs them to ReplayFace. The web app does (2): OpenDota lookup + your familiar history.
+
+Web pages alone cannot read the live Dota lobby.
 
 ## 1. Run the companion
 

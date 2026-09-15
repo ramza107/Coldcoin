@@ -518,8 +518,9 @@ export default function App() {
           <p className="eyebrow">When the game starts</p>
           <h1>Know the enemies</h1>
           <p className="lede">
-            Sync your history once. When you connect to a match, ReplayFace pulls the live enemy roster and flags who
-            you already faced — with their recent form.
+            OpenDota already has stats on almost everyone — but it does not know who is in{' '}
+            <em>your</em> live lobby. Companion reads enemy Steam IDs from Dota after picks; ReplayFace looks them up
+            and flags who you already faced.
           </p>
         </section>
 
@@ -560,7 +561,8 @@ export default function App() {
           <section className="panel">
             <h2>Connect once</h2>
             <p className="help">
-              Builds your familiar index from OpenDota. Live enemies need the Windows companion when a match starts.
+              Builds your familiar index from OpenDota. At match start the companion only needs enemy Steam IDs — ranks,
+              WR, and recent games come from OpenDota right away.
             </p>
             <label className="field">
               <span>Your profile</span>
@@ -605,9 +607,9 @@ export default function App() {
               )}
             </div>
             <p className="fineprint">
-              Live lobby: run <code>node companion/server.mjs</code>, add Dota launch option{' '}
-              <code>-gamestateintegration</code>, copy the GSI cfg (see companion README). Enemy Steam IDs after picks
-              via Overwolf bridge or paste below.
+              Flow: Dota lobby → companion (Steam IDs after picks) → OpenDota lookup. Run{' '}
+              <code>node companion/server.mjs</code>, add <code>-gamestateintegration</code>, copy the GSI cfg. Overwolf
+              bridge or paste supplies enemy IDs — Valve hides them during draft.
             </p>
           </section>
         )}
@@ -626,7 +628,7 @@ export default function App() {
                       {familiarEnemies ? ` · ${familiarEnemies} familiar enemies` : ''}
                     </>
                   ) : (
-                    'Waiting for match start on the companion…'
+                    'No live Steam IDs yet — start a match with companion, or paste enemy IDs (OpenDota has the rest)'
                   )}
                 </p>
               </div>
