@@ -516,6 +516,15 @@ server.listen(PORT, HOST, () => {
   console.log(`  POST /lobby   — Overwolf / manual`)
   console.log(`  POST /gsi     — Dota GSI`)
   console.log(`Open the UI from this URL during matches (GitHub Pages cannot read localhost).`)
+  console.log(`Ready. Leave this process running.`)
+})
+
+server.on('error', (err) => {
+  console.error('Failed to start companion:', err.message)
+  if (err.code === 'EADDRINUSE') {
+    console.error(`Port ${PORT} is busy. Close the other ReplayFace window and try again.`)
+  }
+  process.exit(1)
 })
 
 fs.watchFile(LOBBY_FILE, { interval: 1000 }, () => {
