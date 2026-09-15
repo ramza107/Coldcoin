@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "companion": "npm run build && node companion/server.mjs",
     "companion:only": "node companion/server.mjs",
+    "mini-client": "npm run companion",
     "deploy": "GH_PAGES=1 npm run build && gh-pages -d dist"
   },
   "dependencies": {

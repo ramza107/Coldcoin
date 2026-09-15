@@ -679,8 +679,8 @@ export default function App() {
               )}
             </div>
             <p className="fineprint">
-              Flow: Dota → Overwolf app (`overwolf-app/`) after picks → companion → OpenDota lookup. Run{' '}
-              <code>npm run companion</code>, add <code>-gamestateintegration</code>. Paste works without Overwolf.
+              Legal mini-client: <code>dota-familiar/mini-client/start.bat</code> (GSI + Overwolf GEP). Open{' '}
+              <code>http://127.0.0.1:17321/</code> during matches — not GitHub Pages. Paste works without Overwolf.
             </p>
           </section>
         )}

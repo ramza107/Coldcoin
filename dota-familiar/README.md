@@ -18,23 +18,18 @@ npm run dev
 
 Open `http://localhost:5173`.
 
-## Live enemies (Windows)
+## Live enemies (Windows) — legal mini-client
 
-**Do not use GitHub Pages for live lobby** — browsers block `github.io` → `localhost`.
-
-```bash
-npm run companion
+```bat
+cd dota-familiar\mini-client
+install-gsi.bat
+start.bat
+open-overwolf-app.bat
 ```
 
-Then open **`http://127.0.0.1:17321/`** (UI is served by the companion).
+Details: [`mini-client/README.md`](mini-client/README.md).
 
-Also:
-1. Dota launch option `-gamestateintegration`
-2. Copy GSI cfg (see [`companion/README.md`](companion/README.md))
-3. Load [`overwolf-app/`](overwolf-app/) in Overwolf
-4. Sync your account once on Connect tab
-
-GitHub Pages is fine for history/familiar after games; live match = local URL above.
+Uses only **Dota GSI** + **Overwolf GEP** (no memory cheats). Open **http://127.0.0.1:17321/** for the current game — not GitHub Pages.
 
 ## Notes
 - Uses public [OpenDota](https://www.opendota.com) API.
