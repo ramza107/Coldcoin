@@ -375,15 +375,15 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   display: grid;
   gap: 0.65rem;
 }
-.player-list li {
+.player-list > li {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 0.85rem;
   background: #10161d;
 }
-.player-list li.familiar { border-color: rgba(255, 122, 57, 0.5); }
-.player-list li.you { border-color: rgba(108, 182, 255, 0.4); }
-.player-list li.foe { border-color: rgba(255, 93, 98, 0.28); }
+.player-list > li.familiar { border-color: rgba(255, 122, 57, 0.5); }
+.player-list > li.you { border-color: rgba(108, 182, 255, 0.4); }
+.player-list > li.foe { border-color: rgba(255, 93, 98, 0.28); }
 
 .recent-strip {
   margin-top: 0.55rem;
