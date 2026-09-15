@@ -196,7 +196,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
   const [query, setQuery] = useState('')
-  const [matchLimit, setMatchLimit] = useState(15)
+  const [matchLimit, setMatchLimit] = useState(10)
   const [watch, setWatch] = useState(loadWatchEnabled())
   const [liveListen, setLiveListen] = useState(loadLiveListen())
   const [companionUrl, setCompanionUrl] = useState(loadCompanionUrl())

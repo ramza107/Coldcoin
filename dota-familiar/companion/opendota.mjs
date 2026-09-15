@@ -89,9 +89,15 @@ function slotTeam(slot) {
 /** Build familiar index entirely on companion (avoids browser timeouts). */
 export async function buildFamiliarIndexServer(accountId, matchLimit = 15, onProgress) {
   const [player, wl, recent] = await Promise.all([
-    opendotaGet(`/api/players/${accountId}`),
-    opendotaGet(`/api/players/${accountId}/wl`).catch(() => ({ win: 0, lose: 0 })),
-    opendotaGet(`/api/players/${accountId}/matches?limit=${matchLimit}`),
+    opendotaGet(`/api/players/${accountId}`, { timeoutMs: 30000, retries: 3 }),
+    opendotaGet(`/api/players/${accountId}/wl`, { timeoutMs: 30000, retries: 2 }).catch(() => ({
+      win: 0,
+      lose: 0,
+    })),
+    opendotaGet(`/api/players/${accountId}/matches?limit=${matchLimit}`, {
+      timeoutMs: 30000,
+      retries: 3,
+    }),
   ])
 
   const players = {}
@@ -100,7 +106,7 @@ export async function buildFamiliarIndexServer(accountId, matchLimit = 15, onPro
 
   for (const m of recent) {
     try {
-      const detail = await opendotaGet(`/api/matches/${m.match_id}`, { timeoutMs: 25000, retries: 2 })
+      const detail = await opendotaGet(`/api/matches/${m.match_id}`, { timeoutMs: 35000, retries: 2 })
       const ownerRow = detail.players?.find((p) => p.account_id === accountId)
       const ownerTeam = ownerRow ? slotTeam(ownerRow.player_slot) : slotTeam(m.player_slot)
       const ownerWon =
@@ -137,12 +143,12 @@ export async function buildFamiliarIndexServer(accountId, matchLimit = 15, onPro
         }
         players[key] = base
       }
-    } catch {
-      // skip broken match
+    } catch (e) {
+      console.warn(`[sync] skip match ${m.match_id}:`, e.message || e)
     }
     done += 1
     onProgress?.(done, total)
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => setTimeout(r, 250))
   }
 
   return {
