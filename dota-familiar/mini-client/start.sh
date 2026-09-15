@@ -9,11 +9,16 @@ echo
 
 command -v node >/dev/null || { echo "Node.js required"; exit 1; }
 
-if [[ ! -d node_modules ]]; then
-  npm install
+if [[ ! -f dist/index.html ]]; then
+  echo "No prebuilt UI — building once..."
+  if [[ ! -d node_modules ]]; then
+    npm install
+  fi
+  npm run build
+else
+  echo "Using prebuilt UI in dist/ (no npm build needed)"
 fi
 
-npm run build
 echo
 echo "Companion: http://127.0.0.1:17321/  (keep this running)"
 echo "On Windows: also load ../overwolf-app in Overwolf for enemy Steam IDs"

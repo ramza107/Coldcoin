@@ -17,28 +17,30 @@ echo  ----------------------
 echo  Legal live path: Dota GSI + Overwolf GEP -^> companion -^> OpenDota
 echo.
 
-if not exist "node_modules\" (
-  echo Installing npm packages...
-  call npm install
+if not exist "dist\index.html" (
+  echo No prebuilt UI in dist\. Building once...
+  if not exist "node_modules\" (
+    call npm install
+    if errorlevel 1 (
+      echo npm install failed
+      pause
+      exit /b 1
+    )
+  )
+  call npm run build
   if errorlevel 1 (
-    echo npm install failed
+    echo build failed
     pause
     exit /b 1
   )
-)
-
-echo Building web UI...
-call npm run build
-if errorlevel 1 (
-  echo build failed
-  pause
-  exit /b 1
+) else (
+  echo Using prebuilt UI in dist\  ^(no npm build needed^)
 )
 
 echo.
 echo Starting companion on http://127.0.0.1:17321/
 echo Keep this window open while you play.
-echo Open Live lobby there (NOT GitHub Pages).
+echo Open Live lobby there ^(NOT GitHub Pages^).
 echo.
 
 start "" "http://127.0.0.1:17321/"
