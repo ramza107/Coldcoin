@@ -1,0 +1,22 @@
+ReplayFace — одно приложение
+==============================
+
+Твоя логика верная: тащить Overwolf ради «своего» приложения — плохо.
+Поэтому ReplayFace работает БЕЗ Overwolf.
+
+ЧТО НУЖНО
+  • Node.js LTS один раз: https://nodejs.org/
+  • Двойной клик: ReplayFace.bat
+
+ЧТО УМЕЕТ БЕЗ OVERWOLF
+  • Синк профиля / familiar list (OpenDota)
+  • Авто после матча (Last finished)
+  • Live: вставил ID врагов → статы + familiar
+
+ПОЧЕМУ НЕТ АВТО-ID ВРАГОВ В ЛОББИ
+  Valve не отдаёт чужие Steam ID легальным сторонним клиентам
+  в ранкеде так, как DotaPlus через Overwolf GEP.
+  Свой memory-reader = серая зона / бан-риск. Мы так не делаем.
+
+ОПЦИОНАЛЬНО
+  Меню Install Dota GSI — только сигнал «матч начался».

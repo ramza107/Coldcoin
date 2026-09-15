@@ -568,24 +568,27 @@ a{color:#9ec5ff}.ok{color:#8af0bf}
   }
 })
 
-server.listen(PORT, HOST, () => {
-  const hasUi = fs.existsSync(DIST_DIR)
-  console.log(`ReplayFace companion http://${HOST}:${PORT}`)
-  console.log(`  UI     ${hasUi ? 'http://' + HOST + ':' + PORT + '/' : 'MISSING — run npm run build'}`)
-  console.log(`  GET  /lobby   — live roster`)
-  console.log(`  POST /lobby   — Overwolf / manual`)
-  console.log(`  POST /gsi     — Dota GSI`)
-  console.log(`Open the UI from this URL during matches (GitHub Pages cannot read localhost).`)
-  console.log(`Ready. Leave this process running.`)
-})
-
-server.on('error', (err) => {
-  console.error('Failed to start companion:', err.message)
-  if (err.code === 'EADDRINUSE') {
-    console.error(`Port ${PORT} is busy. Close the other ReplayFace window and try again.`)
-  }
-  process.exit(1)
-})
+export function startCompanionServer() {
+  return new Promise((resolve, reject) => {
+    server.listen(PORT, HOST, () => {
+      const hasUi = fs.existsSync(DIST_DIR)
+      console.log(`ReplayFace companion http://${HOST}:${PORT}`)
+      console.log(`  UI     ${hasUi ? 'http://' + HOST + ':' + PORT + '/' : 'MISSING — run npm run build'}`)
+      console.log(`  GET  /lobby   — live roster`)
+      console.log(`  POST /sync    — Connect profile sync`)
+      console.log(`  POST /gsi     — Dota GSI`)
+      console.log(`Ready. Leave this process running.`)
+      resolve({ host: HOST, port: PORT })
+    })
+    server.on('error', (err) => {
+      console.error('Failed to start companion:', err.message)
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Port ${PORT} is busy. Close the other ReplayFace window and try again.`)
+      }
+      reject(err)
+    })
+  })
+}
 
 fs.watchFile(LOBBY_FILE, { interval: 1000 }, () => {
   try {
@@ -600,3 +603,10 @@ fs.watchFile(LOBBY_FILE, { interval: 1000 }, () => {
     console.warn('[file] bad live-lobby.json', e.message)
   }
 })
+
+const isDirectRun =
+  process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+
+if (isDirectRun) {
+  startCompanionServer().catch(() => process.exit(1))
+}

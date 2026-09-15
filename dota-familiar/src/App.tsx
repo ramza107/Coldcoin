@@ -632,12 +632,11 @@ export default function App() {
 
       <main className="shell">
         <section className="hero">
-          <p className="eyebrow">When the game starts</p>
+          <p className="eyebrow">One app</p>
           <h1>Know the enemies</h1>
           <p className="lede">
-            OpenDota already has stats on almost everyone — but it does not know who is in{' '}
-            <em>your</em> live lobby. Companion reads enemy Steam IDs from Dota after picks; ReplayFace looks them up
-            and flags who you already faced.
+            Connect once. After games, ReplayFace marks who you already faced. In a live lobby, paste enemy IDs —
+            Valve does not give other players&apos; Steam IDs to third-party apps without Overwolf-class GEP.
           </p>
         </section>
 
@@ -725,8 +724,8 @@ export default function App() {
               )}
             </div>
             <p className="fineprint">
-              Legal mini-client: <code>dota-familiar/mini-client/start.bat</code> (GSI + Overwolf GEP). Open{' '}
-              <code>http://127.0.0.1:17321/</code> during matches — not GitHub Pages. Paste works without Overwolf.
+              One app: <code>desktop\start-desktop.bat</code> or <code>RUN.bat</code>. No Overwolf required for sync /
+              post-game / paste. Live auto-IDs need Valve-approved GEP (optional later).
             </p>
           </section>
         )}
@@ -779,8 +778,8 @@ export default function App() {
 
             {companionOnline && !lobby && (
               <div className="banner ok">
-                Companion online — waiting for Dota/Overwolf to push the current lobby. Start a match or click “Load
-                demo lobby”.
+                Companion online. For live enemies: paste IDs below (or Load demo). Auto roster after picks needs an
+                optional GEP bridge — not required for normal use.
               </div>
             )}
 
@@ -798,14 +797,12 @@ export default function App() {
 
             {lobby?.awaitingIds && (
               <div className="banner ok">
-                Connect/draft phase: ranks & medals can appear, but Steam IDs (familiar + OpenDota history) only after
-                picks end (<code>STRATEGY_TIME</code>) — Valve rule, same for every Overwolf app.
+                Draft/connect: ranks may show; Steam IDs stay hidden until after picks (Valve). Paste IDs anytime for
+                full intel.
               </div>
             )}
             {lobby?.awaitingRoster && !lobby?.awaitingIds && (
-              <div className="banner ok">
-                Match detected. Waiting for full enemy roster…
-              </div>
+              <div className="banner ok">Match detected. Waiting for roster / paste…</div>
             )}
 
             {liveEnemies.length > 0 ? (
@@ -815,9 +812,7 @@ export default function App() {
               </div>
             ) : (
               <p className="help" style={{ marginTop: '0.8rem' }}>
-                {lobby?.phase === 'connecting'
-                  ? 'Connected to match — waiting for roster slots from Overwolf…'
-                  : 'No enemies yet. Start a match with companion + Overwolf, or paste IDs.'}
+                No enemies yet — paste account IDs below, or wait until after the match and use Last finished.
               </p>
             )}
 
@@ -831,8 +826,7 @@ export default function App() {
             <div className="paste-box">
               <h3>Paste enemies</h3>
               <p className="help">
-                Account IDs, Steam64, or OpenDota links — one per line or comma-separated. Use this if Overwolf is not
-                set up yet.
+                Paste enemy account IDs / Steam64 / OpenDota links when the lobby is up — no Overwolf needed.
               </p>
               <textarea
                 value={enemyPaste}
