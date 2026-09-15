@@ -49,7 +49,50 @@ export interface MatchPlayer {
   level?: number
 }
 
+export interface RecentMatchBrief {
+  matchId: number
+  heroId: number
+  win: boolean
+  kills: number
+  deaths: number
+  assists: number
+  startTime: number
+  duration?: number
+  lobbyType?: number
+}
+
 export interface CheckedPlayer extends MatchPlayer {
   familiar?: FamiliarRecord
   profile?: PlayerProfile | null
+  recentMatches?: RecentMatchBrief[]
+  role?: 'enemy' | 'ally' | 'you'
+}
+
+export interface LiveLobbyPlayer {
+  accountId: AccountId | null
+  personaname?: string
+  heroId: number
+  team: 'radiant' | 'dire'
+  steamId?: string
+  isOwner?: boolean
+}
+
+export interface LiveLobby {
+  source: string
+  updatedAt: number
+  matchStartedAt?: number | null
+  matchId?: number | null
+  gameState?: string | null
+  myTeam: 'radiant' | 'dire'
+  players: LiveLobbyPlayer[]
+  enemies: LiveLobbyPlayer[]
+  allies: LiveLobbyPlayer[]
+  awaitingRoster?: boolean
+}
+
+export interface CompanionLobbyResponse {
+  lobby: LiveLobby | null
+  companion: boolean
+  lastGsiAt?: number | null
+  gameState?: string | null
 }

@@ -1,4 +1,11 @@
-import type { AccountId, FamiliarIndex, FamiliarRecord, MatchPlayer, PlayerProfile } from '../types'
+import type {
+  AccountId,
+  FamiliarIndex,
+  FamiliarRecord,
+  MatchPlayer,
+  PlayerProfile,
+  RecentMatchBrief,
+} from '../types'
 
 const STEAM64_BASE = 76561197960265728n
 
@@ -106,6 +113,42 @@ export async function fetchRecentMatches(accountId: AccountId, limit = 50): Prom
 export async function fetchLatestMatchId(accountId: AccountId): Promise<number | null> {
   const recent = await fetchRecentMatches(accountId, 1)
   return recent[0]?.match_id ?? null
+}
+
+interface RecentMatchApiRow {
+  match_id: number
+  player_slot: number
+  radiant_win: boolean
+  hero_id: number
+  kills: number
+  deaths: number
+  assists: number
+  start_time: number
+  duration?: number
+  lobby_type?: number
+}
+
+/** Last N finished matches for a player (enemy intel at lobby time). */
+export async function fetchPlayerRecentBrief(
+  accountId: AccountId,
+  limit = 5,
+): Promise<RecentMatchBrief[]> {
+  const rows = await api<RecentMatchApiRow[]>(`/players/${accountId}/matches?limit=${limit}`)
+  return rows.map((m) => {
+    const isRadiant = m.player_slot < 128
+    const win = (isRadiant && m.radiant_win) || (!isRadiant && !m.radiant_win)
+    return {
+      matchId: m.match_id,
+      heroId: m.hero_id,
+      win,
+      kills: m.kills,
+      deaths: m.deaths,
+      assists: m.assists,
+      startTime: m.start_time,
+      duration: m.duration,
+      lobbyType: m.lobby_type,
+    }
+  })
 }
 
 export async function fetchMatch(matchId: number): Promise<MatchDetail> {

@@ -1,13 +1,11 @@
-# Coldcoin
+# Coldcoin / ReplayFace
 
-Sandbox repo. Active project:
+Dota 2 familiar-player tools live in [`dota-familiar/`](dota-familiar/).
 
-## ReplayFace (`dota-familiar/`)
-
-Dota 2 web app that syncs OpenDota history and highlights players you already played with.
+**Live lobby:** when a match starts, see enemies you already faced (local companion + OpenDota).
 
 ```bash
-cd dota-familiar
-npm install
-npm run dev
+cd dota-familiar && npm install && npm run dev
+# separate terminal — Windows, while Dota runs:
+npm run companion
 ```

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { fetchCompanionHealth, fetchCompanionLobby, lobbySignature } from './lib/companion'
 import {
   absorbMatchIntoIndex,
   accountIdToSteam64,
@@ -6,26 +7,40 @@ import {
   fetchLatestMatchId,
   fetchMatch,
   fetchPlayer,
+  fetchPlayerRecentBrief,
   matchPlayersFromDetail,
   rankLabel,
   resolveAccountId,
+  steam64ToAccountId,
   winrate,
 } from './lib/opendota'
 import {
   clearIndex,
+  DEFAULT_COMPANION_URL,
+  loadCompanionUrl,
   loadIndex,
   loadLastMatchId,
+  loadLiveListen,
   loadSavedAccount,
   loadWatchEnabled,
   saveAccountInput,
+  saveCompanionUrl,
   saveIndex,
   saveLastMatchId,
+  saveLiveListen,
   saveWatchEnabled,
 } from './lib/storage'
-import type { CheckedPlayer, FamiliarIndex, FamiliarRecord } from './types'
+import type {
+  CheckedPlayer,
+  FamiliarIndex,
+  FamiliarRecord,
+  LiveLobby,
+  LiveLobbyPlayer,
+  RecentMatchBrief,
+} from './types'
 import './App.css'
 
-type Tab = 'live' | 'familiar' | 'sync'
+type Tab = 'live' | 'history' | 'familiar' | 'sync'
 
 function formatAgo(unixSec: number): string {
   const diff = Date.now() / 1000 - unixSec
@@ -51,6 +66,27 @@ function FamiliarBadge({ rec }: { rec: FamiliarRecord }) {
   )
 }
 
+function RecentStrip({ matches }: { matches?: RecentMatchBrief[] }) {
+  if (!matches?.length) return null
+  const wins = matches.filter((m) => m.win).length
+  return (
+    <div className="recent-strip">
+      <em>Last {matches.length} matches · {wins}W-{matches.length - wins}L</em>
+      <ul>
+        {matches.map((m) => (
+          <li key={m.matchId} className={m.win ? 'w' : 'l'} title={`Hero #${m.heroId}`}>
+            <span className="outcome">{m.win ? 'W' : 'L'}</span>
+            <span>
+              #{m.heroId} · {m.kills}/{m.deaths}/{m.assists}
+            </span>
+            <span className="ago">{formatAgo(m.startTime)}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 async function enrichMatch(detail: Awaited<ReturnType<typeof fetchMatch>>, index: FamiliarIndex) {
   const rows = matchPlayersFromDetail(detail, index.ownerAccountId)
   const enriched: CheckedPlayer[] = []
@@ -64,9 +100,82 @@ async function enrichMatch(detail: Awaited<ReturnType<typeof fetchMatch>>, index
         profile = null
       }
     }
-    enriched.push({ ...row, familiar, profile })
+    enriched.push({
+      ...row,
+      familiar,
+      profile,
+      role: row.isOwner ? 'you' : row.team === rows.find((r) => r.isOwner)?.team ? 'ally' : 'enemy',
+    })
   }
   return enriched
+}
+
+async function enrichLobbyPlayers(
+  players: LiveLobbyPlayer[],
+  myTeam: 'radiant' | 'dire',
+  index: FamiliarIndex,
+  withRecent: boolean,
+): Promise<CheckedPlayer[]> {
+  const out: CheckedPlayer[] = []
+  for (const p of players) {
+    const isOwner = Boolean(p.isOwner) || p.accountId === index.ownerAccountId
+    const role: CheckedPlayer['role'] = isOwner ? 'you' : p.team === myTeam ? 'ally' : 'enemy'
+    const familiar = p.accountId && !isOwner ? index.players[String(p.accountId)] : undefined
+    let profile = null
+    let recentMatches: RecentMatchBrief[] | undefined
+    if (p.accountId) {
+      try {
+        profile = await fetchPlayer(p.accountId)
+      } catch {
+        profile = null
+      }
+      if (withRecent && role === 'enemy') {
+        try {
+          recentMatches = await fetchPlayerRecentBrief(p.accountId, 5)
+        } catch {
+          recentMatches = undefined
+        }
+      }
+    }
+    out.push({
+      accountId: p.accountId,
+      personaname: p.personaname || profile?.personaname,
+      heroId: p.heroId,
+      team: p.team,
+      isOwner,
+      familiar,
+      profile,
+      recentMatches,
+      role,
+    })
+  }
+  return out
+}
+
+function parseEnemyPaste(raw: string, myTeam: 'radiant' | 'dire'): LiveLobbyPlayer[] {
+  const enemyTeam = myTeam === 'radiant' ? 'dire' : 'radiant'
+  const tokens = raw
+    .split(/[\s,;]+/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+  const players: LiveLobbyPlayer[] = []
+  for (const token of tokens) {
+    try {
+      let accountId: number | null = null
+      const od = token.match(/opendota\.com\/players\/(\d+)/i)
+      const st = token.match(/profiles\/(\d{17})/i)
+      if (od) accountId = Number(od[1])
+      else if (st) accountId = steam64ToAccountId(st[1])
+      else if (/^\d{17}$/.test(token)) accountId = steam64ToAccountId(token)
+      else if (/^\d{3,12}$/.test(token)) accountId = Number(token)
+      if (accountId) {
+        players.push({ accountId, heroId: 0, team: enemyTeam })
+      }
+    } catch {
+      // skip bad token
+    }
+  }
+  return players
 }
 
 export default function App() {
@@ -74,6 +183,8 @@ export default function App() {
   const [index, setIndex] = useState<FamiliarIndex | null>(null)
   const [tab, setTab] = useState<Tab>('sync')
   const [checked, setChecked] = useState<CheckedPlayer[]>([])
+  const [livePlayers, setLivePlayers] = useState<CheckedPlayer[]>([])
+  const [lobby, setLobby] = useState<LiveLobby | null>(null)
   const [activeMatchId, setActiveMatchId] = useState<number | null>(loadLastMatchId())
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
@@ -82,15 +193,47 @@ export default function App() {
   const [query, setQuery] = useState('')
   const [matchLimit, setMatchLimit] = useState(30)
   const [watch, setWatch] = useState(loadWatchEnabled())
+  const [liveListen, setLiveListen] = useState(loadLiveListen())
+  const [companionUrl, setCompanionUrl] = useState(loadCompanionUrl())
+  const [companionOnline, setCompanionOnline] = useState(false)
+  const [enemyPaste, setEnemyPaste] = useState('')
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null)
   const indexRef = useRef<FamiliarIndex | null>(null)
   const bootRef = useRef(false)
-  indexRef.current = index
+  const lobbySigRef = useRef('')
+  const enrichingRef = useRef(false)
+
+  useEffect(() => {
+    indexRef.current = index
+  }, [index])
+
+  const applyLobby = useCallback(async (next: LiveLobby, current: FamiliarIndex) => {
+    const sig = lobbySignature(next)
+    if (sig === lobbySigRef.current) return
+    if (enrichingRef.current) return
+    enrichingRef.current = true
+    lobbySigRef.current = sig
+    setLobby(next)
+    try {
+      const enriched = await enrichLobbyPlayers(next.players, next.myTeam, current, true)
+      setLivePlayers(enriched)
+      const enemyFamiliar = enriched.filter((p) => p.role === 'enemy' && p.familiar).length
+      const enemyTotal = enriched.filter((p) => p.role === 'enemy').length
+      setStatus(
+        next.awaitingRoster
+          ? `Match live (${next.gameState || 'in game'}) — waiting for enemy roster (Overwolf / paste)`
+          : `Live lobby · ${enemyTotal} enemies · ${enemyFamiliar} familiar`,
+      )
+      setTab('live')
+      setLastCheckedAt(Date.now())
+    } finally {
+      enrichingRef.current = false
+    }
+  }, [])
 
   const loadMatchById = useCallback(async (matchId: number, current: FamiliarIndex, absorbNew: boolean) => {
     const previousId = loadLastMatchId()
     const detail = await fetchMatch(matchId)
-    // Badge "played before" should use history BEFORE absorbing this match
     const enriched = await enrichMatch(detail, current)
     setChecked(enriched)
     setActiveMatchId(matchId)
@@ -119,8 +262,8 @@ export default function App() {
       const result = await loadMatchById(latestId, current, absorbNew)
       setStatus(
         result.isNew
-          ? `Auto-loaded match ${result.matchId} · ${result.familiarCount} familiar`
-          : `Latest match ${result.matchId} · ${result.familiarCount} familiar`,
+          ? `Finished match ${result.matchId} · ${result.familiarCount} familiar`
+          : `Latest finished match ${result.matchId} · ${result.familiarCount} familiar`,
       )
       return result
     },
@@ -137,15 +280,37 @@ export default function App() {
     void (async () => {
       try {
         setBusy(true)
-        setStatus('Auto-pulling your latest match…')
-        await pullLatest(saved, false)
-      } catch (e) {
-        setError(e instanceof Error ? e.message : 'Failed to auto-load latest match')
+        setStatus('Ready for live lobby — companion listens for match start')
       } finally {
         setBusy(false)
       }
     })()
-  }, [pullLatest])
+  }, [])
+
+  // Poll local companion for live enemies when a match starts
+  useEffect(() => {
+    if (!liveListen || !index) return
+    let cancelled = false
+
+    const tick = async () => {
+      const current = indexRef.current
+      if (!current) return
+      const online = await fetchCompanionHealth(companionUrl)
+      if (cancelled) return
+      setCompanionOnline(online)
+      if (!online) return
+      const data = await fetchCompanionLobby(companionUrl)
+      if (cancelled || !data?.lobby) return
+      await applyLobby(data.lobby, current)
+    }
+
+    void tick()
+    const id = window.setInterval(() => void tick(), 2500)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [liveListen, index, companionUrl, applyLobby])
 
   useEffect(() => {
     if (!watch || !index) return
@@ -157,8 +322,7 @@ export default function App() {
         if (!latestId || latestId === loadLastMatchId()) return
         setBusy(true)
         const result = await loadMatchById(latestId, current, true)
-        setStatus(`New match auto-loaded: ${result.matchId} · ${result.familiarCount} familiar`)
-        setTab('live')
+        setStatus(`New finished match: ${result.matchId} · ${result.familiarCount} familiar`)
       } catch {
         // keep polling
       } finally {
@@ -199,10 +363,13 @@ export default function App() {
       setIndex(built)
       indexRef.current = built
       setTab('live')
+      setLiveListen(true)
+      saveLiveListen(true)
       setWatch(true)
       saveWatchEnabled(true)
-      setStatus(`Synced ${built.matchesScanned} matches · auto-loading latest…`)
-      await pullLatest(built, false)
+      setStatus(
+        `Synced ${built.matchesScanned} matches · start companion + Dota; enemies appear when the match starts`,
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed')
     } finally {
@@ -215,9 +382,62 @@ export default function App() {
     setBusy(true)
     try {
       await pullLatest(index, true)
-      setTab('live')
+      setTab('history')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Refresh failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handlePasteEnemies() {
+    if (!index) return
+    setError('')
+    setBusy(true)
+    try {
+      const myTeam = lobby?.myTeam || 'radiant'
+      let enemies = parseEnemyPaste(enemyPaste, myTeam)
+      if (!enemies.length) {
+        const one = enemyPaste.trim()
+        if (one) {
+          const id = await resolveAccountId(one)
+          enemies = [{ accountId: id, heroId: 0, team: myTeam === 'radiant' ? 'dire' : 'radiant' }]
+        }
+      }
+      if (!enemies.length) throw new Error('Paste enemy account IDs, Steam64, or OpenDota links')
+
+      const me: LiveLobbyPlayer = {
+        accountId: index.ownerAccountId,
+        personaname: index.ownerName,
+        heroId: 0,
+        team: myTeam,
+        isOwner: true,
+      }
+      const next: LiveLobby = {
+        source: 'paste',
+        updatedAt: Date.now(),
+        matchStartedAt: Date.now(),
+        myTeam,
+        players: [me, ...enemies],
+        enemies,
+        allies: [me],
+        awaitingRoster: false,
+      }
+      lobbySigRef.current = ''
+      await applyLobby(next, index)
+
+      // also push to companion if online
+      try {
+        await fetch(`${companionUrl.replace(/\/$/, '')}/lobby`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(next),
+        })
+      } catch {
+        // optional
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not load enemies')
     } finally {
       setBusy(false)
     }
@@ -227,7 +447,14 @@ export default function App() {
     const next = !watch
     setWatch(next)
     saveWatchEnabled(next)
-    setStatus(next ? 'Auto-watch ON — checking OpenDota every ~45s' : 'Auto-watch OFF')
+    setStatus(next ? 'Post-game auto-watch ON' : 'Post-game auto-watch OFF')
+  }
+
+  function toggleLiveListen() {
+    const next = !liveListen
+    setLiveListen(next)
+    saveLiveListen(next)
+    setStatus(next ? 'Listening for live lobby on companion…' : 'Live listen OFF')
   }
 
   function handleReset() {
@@ -235,12 +462,18 @@ export default function App() {
     localStorage.removeItem('dota-familiar:last-match:v1')
     setIndex(null)
     setChecked([])
+    setLivePlayers([])
+    setLobby(null)
     setActiveMatchId(null)
     setWatch(false)
     saveWatchEnabled(false)
     setTab('sync')
     setStatus('Cleared local data')
   }
+
+  const liveEnemies = livePlayers.filter((p) => p.role === 'enemy')
+  const liveAllies = livePlayers.filter((p) => p.role === 'ally' || p.role === 'you')
+  const familiarEnemies = liveEnemies.filter((p) => p.familiar).length
 
   const radiant = checked.filter((p) => p.team === 'radiant')
   const dire = checked.filter((p) => p.team === 'dire')
@@ -254,7 +487,7 @@ export default function App() {
           <span className="mark">RF</span>
           <div>
             <strong>ReplayFace</strong>
-            <em>Auto familiar radar for Dota</em>
+            <em>Enemy radar at match start</em>
           </div>
         </div>
         {index && (
@@ -270,11 +503,11 @@ export default function App() {
 
       <main className="shell">
         <section className="hero">
-          <p className="eyebrow">No match links needed</p>
-          <h1>Auto-pull your games</h1>
+          <p className="eyebrow">When the game starts</p>
+          <h1>Know the enemies</h1>
           <p className="lede">
-            Connect once. ReplayFace pulls your latest OpenDota match automatically and highlights players you already
-            faced. Keep auto-watch on to update after every game.
+            Sync your history once. When you connect to a match, ReplayFace pulls the live enemy roster and flags who
+            you already faced — with their recent form.
           </p>
         </section>
 
@@ -288,7 +521,15 @@ export default function App() {
             onClick={() => setTab('live')}
             disabled={!index}
           >
-            Live match
+            Live lobby
+          </button>
+          <button
+            type="button"
+            className={tab === 'history' ? 'on' : ''}
+            onClick={() => setTab('history')}
+            disabled={!index}
+          >
+            Last finished
           </button>
           <button
             type="button"
@@ -307,7 +548,7 @@ export default function App() {
           <section className="panel">
             <h2>Connect once</h2>
             <p className="help">
-              Profile is needed only for first setup. After that matches are pulled automatically — no match IDs.
+              Builds your familiar index from OpenDota. Live enemies need the Windows companion when a match starts.
             </p>
             <label className="field">
               <span>Your profile</span>
@@ -343,7 +584,7 @@ export default function App() {
                 disabled={busy || !accountInput.trim()}
                 onClick={handleConnectAndSync}
               >
-                {busy ? 'Working…' : index ? 'Re-sync & auto-load' : 'Connect & auto-load'}
+                {busy ? 'Working…' : index ? 'Re-sync history' : 'Connect & sync'}
               </button>
               {index && (
                 <button type="button" className="ghost" disabled={busy} onClick={handleReset}>
@@ -352,8 +593,9 @@ export default function App() {
               )}
             </div>
             <p className="fineprint">
-              OpenDota usually shows a match a few minutes after it ends. Draft lobby before game start needs a desktop
-              overlay later — web apps cannot read your live Dota client directly.
+              Live lobby: run <code>node companion/server.mjs</code>, add Dota launch option{' '}
+              <code>-gamestateintegration</code>, copy the GSI cfg (see companion README). Enemy Steam IDs after picks
+              via Overwolf bridge or paste below.
             </p>
           </section>
         )}
@@ -362,7 +604,97 @@ export default function App() {
           <section className="panel">
             <div className="row spread">
               <div>
-                <h2>Your latest match</h2>
+                <h2>Live lobby — enemies</h2>
+                <p className="help" style={{ marginBottom: 0 }}>
+                  {lobby ? (
+                    <>
+                      Source {lobby.source}
+                      {lobby.gameState ? ` · ${lobby.gameState}` : ''}
+                      {lastCheckedAt ? ` · ${new Date(lastCheckedAt).toLocaleTimeString()}` : ''}
+                      {familiarEnemies ? ` · ${familiarEnemies} familiar enemies` : ''}
+                    </>
+                  ) : (
+                    'Waiting for match start on the companion…'
+                  )}
+                </p>
+              </div>
+              <div className="row">
+                <button
+                  type="button"
+                  className={liveListen ? 'primary' : 'ghost'}
+                  disabled={busy}
+                  onClick={toggleLiveListen}
+                >
+                  {liveListen ? 'Listening ON' : 'Listening OFF'}
+                </button>
+              </div>
+            </div>
+
+            <div className={`companion-pill ${companionOnline ? 'up' : 'down'}`}>
+              Companion {companionOnline ? 'online' : 'offline'} · {companionUrl}
+            </div>
+
+            <label className="field">
+              <span>Companion URL</span>
+              <input
+                value={companionUrl}
+                onChange={(e) => {
+                  setCompanionUrl(e.target.value)
+                  saveCompanionUrl(e.target.value || DEFAULT_COMPANION_URL)
+                }}
+                placeholder={DEFAULT_COMPANION_URL}
+              />
+            </label>
+
+            {lobby?.awaitingRoster && (
+              <div className="banner ok">
+                Match detected. Enemy IDs appear after picks (Overwolf roster) or paste them below.
+              </div>
+            )}
+
+            {liveEnemies.length > 0 ? (
+              <div className="enemy-focus">
+                <h3>Enemies now</h3>
+                <PlayerList players={liveEnemies} showRecent />
+              </div>
+            ) : (
+              <p className="help" style={{ marginTop: '0.8rem' }}>
+                No enemies yet. Start a match with the companion running, or paste IDs.
+              </p>
+            )}
+
+            {liveAllies.length > 0 && (
+              <div className="ally-block">
+                <h3>Your side</h3>
+                <PlayerList players={liveAllies} />
+              </div>
+            )}
+
+            <div className="paste-box">
+              <h3>Paste enemies</h3>
+              <p className="help">
+                Account IDs, Steam64, or OpenDota links — one per line or comma-separated. Use this if Overwolf is not
+                set up yet.
+              </p>
+              <textarea
+                value={enemyPaste}
+                onChange={(e) => setEnemyPaste(e.target.value)}
+                placeholder={'86745912\nhttps://www.opendota.com/players/…'}
+                rows={3}
+                disabled={busy}
+              />
+              <button type="button" className="primary" disabled={busy || !enemyPaste.trim()} onClick={handlePasteEnemies}>
+                {busy ? 'Loading…' : 'Load enemy intel'}
+              </button>
+            </div>
+          </section>
+        )}
+
+        {tab === 'history' && index && (
+          <section className="panel">
+            <div className="row spread">
+              <div>
+                <h2>Last finished match</h2>
                 <p className="help" style={{ marginBottom: 0 }}>
                   {activeMatchId ? (
                     <>
@@ -374,11 +706,10 @@ export default function App() {
                       >
                         {activeMatchId}
                       </a>
-                      {lastCheckedAt ? ` · updated ${new Date(lastCheckedAt).toLocaleTimeString()}` : ''}
                       {familiarInMatch ? ` · ${familiarInMatch} familiar` : ''}
                     </>
                   ) : (
-                    'Waiting for OpenDota…'
+                    'Pull a finished match from OpenDota'
                   )}
                 </p>
               </div>
@@ -392,12 +723,6 @@ export default function App() {
               </div>
             </div>
 
-            {watch && (
-              <div className="banner ok" style={{ marginTop: '0.9rem' }}>
-                Auto-watch is on. Checking OpenDota every ~45s for a new finished match.
-              </div>
-            )}
-
             {checked.length > 0 ? (
               <div className="teams">
                 <TeamBlock title="Radiant" players={radiant} />
@@ -405,7 +730,7 @@ export default function App() {
               </div>
             ) : (
               <p className="help" style={{ marginTop: '1rem' }}>
-                No match loaded yet. Click refresh, or wait for auto-watch.
+                No finished match loaded yet.
               </p>
             )}
           </section>
@@ -464,81 +789,90 @@ export default function App() {
   )
 }
 
+function PlayerList({ players, showRecent }: { players: CheckedPlayer[]; showRecent?: boolean }) {
+  return (
+    <ul className="player-list">
+      {players.map((p, idx) => {
+        const wr = winrate(p.profile?.wins, p.profile?.losses)
+        const games =
+          p.profile?.wins != null && p.profile?.losses != null ? p.profile.wins + p.profile.losses : null
+        return (
+          <li
+            key={`${p.accountId}-${idx}`}
+            className={p.familiar ? 'familiar' : p.isOwner ? 'you' : p.role === 'enemy' ? 'foe' : ''}
+          >
+            <div className="line">
+              <div>
+                <b>
+                  {p.isOwner
+                    ? `${p.personaname || 'You'} (you)`
+                    : p.personaname || 'Anonymous / private'}
+                </b>
+                <span className="id">
+                  {p.heroId ? `Hero #${p.heroId} · ` : ''}
+                  {p.accountId ? p.accountId : 'no account'}
+                  {p.role === 'enemy' ? ' · enemy' : p.role === 'ally' ? ' · ally' : ''}
+                </span>
+              </div>
+              {p.familiar && <FamiliarBadge rec={p.familiar} />}
+              {!p.familiar && !p.isOwner && p.accountId && <span className="badge new">New to you</span>}
+            </div>
+
+            <div className="stats-grid">
+              <div>
+                <em>Career</em>
+                <strong>{p.profile?.rankTier != null ? rankLabel(p.profile.rankTier) : '—'}</strong>
+                <span>
+                  {wr ? `${wr} WR` : 'WR n/a'}
+                  {games != null ? ` · ${games} games` : ''}
+                </span>
+              </div>
+              <div>
+                <em>Vs you (history)</em>
+                <strong>
+                  {p.familiar
+                    ? `${p.familiar.asEnemy} enemy · ${p.familiar.asAlly} ally`
+                    : 'First meeting'}
+                </strong>
+                <span>
+                  {p.familiar
+                    ? `Your wins vs them ${p.familiar.winsAgainst}/${p.familiar.asEnemy || 0}`
+                    : 'Not in your scanned matches'}
+                </span>
+              </div>
+            </div>
+
+            {showRecent && <RecentStrip matches={p.recentMatches} />}
+
+            {p.accountId != null && (
+              <div className="links">
+                <a href={`https://www.opendota.com/players/${p.accountId}`} target="_blank" rel="noreferrer">
+                  OpenDota
+                </a>
+                <a href={`https://www.dotabuff.com/players/${p.accountId}`} target="_blank" rel="noreferrer">
+                  Dotabuff
+                </a>
+                <a
+                  href={`https://steamcommunity.com/profiles/${accountIdToSteam64(p.accountId)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Steam
+                </a>
+              </div>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
 function TeamBlock({ title, players }: { title: string; players: CheckedPlayer[] }) {
   return (
     <div className="team">
       <h3>{title}</h3>
-      <ul>
-        {players.map((p, idx) => {
-          const wr = winrate(p.profile?.wins, p.profile?.losses)
-          const games =
-            p.profile?.wins != null && p.profile?.losses != null
-              ? p.profile.wins + p.profile.losses
-              : null
-          return (
-            <li key={`${p.accountId}-${idx}`} className={p.familiar ? 'familiar' : p.isOwner ? 'you' : ''}>
-              <div className="line">
-                <div>
-                  <b>
-                    {p.isOwner
-                      ? `${p.personaname || 'You'} (you)`
-                      : p.personaname || 'Anonymous / private'}
-                  </b>
-                  <span className="id">
-                    Hero #{p.heroId}
-                    {p.level != null ? ` · lvl ${p.level}` : ''}
-                    {p.accountId ? ` · ${p.accountId}` : ' · no account'}
-                  </span>
-                </div>
-                {p.familiar && <FamiliarBadge rec={p.familiar} />}
-                {!p.familiar && !p.isOwner && p.accountId && <span className="badge new">New to you</span>}
-              </div>
-
-              <div className="stats-grid">
-                <div>
-                  <em>This match</em>
-                  <strong>
-                    {p.kills ?? '-'}/{p.deaths ?? '-'}/{p.assists ?? '-'}
-                  </strong>
-                  <span>
-                    {p.gpm != null ? `${p.gpm} GPM` : ''}
-                    {p.gpm != null && p.xpm != null ? ' · ' : ''}
-                    {p.xpm != null ? `${p.xpm} XPM` : ''}
-                    {p.netWorth != null ? ` · ${p.netWorth} NW` : ''}
-                  </span>
-                </div>
-                <div>
-                  <em>Career</em>
-                  <strong>{p.profile?.rankTier != null ? rankLabel(p.profile.rankTier) : '—'}</strong>
-                  <span>
-                    {wr ? `${wr} WR` : 'WR n/a'}
-                    {games != null ? ` · ${games} games` : ''}
-                    {p.profile?.wins != null ? ` · ${p.profile.wins}W-${p.profile.losses}L` : ''}
-                  </span>
-                </div>
-              </div>
-
-              {p.accountId != null && (
-                <div className="links">
-                  <a href={`https://www.opendota.com/players/${p.accountId}`} target="_blank" rel="noreferrer">
-                    OpenDota
-                  </a>
-                  <a href={`https://www.dotabuff.com/players/${p.accountId}`} target="_blank" rel="noreferrer">
-                    Dotabuff
-                  </a>
-                  <a
-                    href={`https://steamcommunity.com/profiles/${accountIdToSteam64(p.accountId)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Steam
-                  </a>
-                </div>
-              )}
-            </li>
-          )
-        })}
-      </ul>
+      <PlayerList players={players} />
     </div>
   )
 }
