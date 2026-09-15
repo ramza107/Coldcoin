@@ -196,7 +196,7 @@ export default function App() {
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
   const [query, setQuery] = useState('')
-  const [matchLimit, setMatchLimit] = useState(30)
+  const [matchLimit, setMatchLimit] = useState(15)
   const [watch, setWatch] = useState(loadWatchEnabled())
   const [liveListen, setLiveListen] = useState(loadLiveListen())
   const [companionUrl, setCompanionUrl] = useState(loadCompanionUrl())
@@ -364,15 +364,56 @@ export default function App() {
     setError('')
     setStatus('')
     setBusy(true)
+    setProgress({ done: 0, total: 0 })
     try {
       saveAccountInput(accountInput)
-      setStatus('Resolving account…')
-      const accountId = await resolveAccountId(accountInput)
-      setStatus('Loading profile & match history…')
-      const built = await buildFamiliarIndex(accountId, matchLimit, (done, total) => {
-        setProgress({ done, total })
-        setStatus(`Scanning matches ${done}/${total}…`)
-      })
+      const local =
+        typeof window !== 'undefined' &&
+        (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')
+
+      let built
+      if (local) {
+        setStatus('Checking OpenDota via companion…')
+        const pingRes = await fetch(`${companionUrl.replace(/\/$/, '')}/opendota/_ping`, {
+          cache: 'no-store',
+        })
+        const ping = await pingRes.json().catch(() => ({}))
+        if (!pingRes.ok || ping.ok === false) {
+          throw new Error(
+            ping.hint ||
+              ping.error ||
+              'OpenDota unreachable from companion. Try VPN, then restart RUN.bat.',
+          )
+        }
+        setStatus(`OpenDota OK (${ping.ms}ms) · syncing ${matchLimit} matches on companion…`)
+        const ctrl = new AbortController()
+        const timer = window.setTimeout(() => ctrl.abort(), 180000)
+        let syncRes
+        try {
+          syncRes = await fetch(`${companionUrl.replace(/\/$/, '')}/sync`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ account: accountInput, matchLimit }),
+            signal: ctrl.signal,
+          })
+        } finally {
+          window.clearTimeout(timer)
+        }
+        const payload = await syncRes.json().catch(() => ({}))
+        if (!syncRes.ok || !payload.index) {
+          throw new Error(payload.hint || payload.error || `Sync failed (${syncRes.status})`)
+        }
+        built = payload.index
+      } else {
+        setStatus('Resolving account…')
+        const accountId = await resolveAccountId(accountInput)
+        setStatus('Loading profile & match history…')
+        built = await buildFamiliarIndex(accountId, matchLimit, (done, total) => {
+          setProgress({ done, total })
+          setStatus(`Scanning matches ${done}/${total}…`)
+        })
+      }
+
       saveIndex(built)
       setIndex(built)
       indexRef.current = built
@@ -382,10 +423,14 @@ export default function App() {
       setWatch(true)
       saveWatchEnabled(true)
       setStatus(
-        `Synced ${built.matchesScanned} matches · start companion + Dota; enemies appear when the match starts`,
+        `Synced ${built.matchesScanned} matches · ${Object.keys(built.players).length} familiar remembered`,
       )
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Sync failed')
+      if (e instanceof Error && e.name === 'AbortError') {
+        setError('Sync timeout (3 min). OpenDota is slow/blocked — try VPN or fewer matches (15).')
+      } else {
+        setError(e instanceof Error ? e.message : 'Sync failed')
+      }
     } finally {
       setBusy(false)
     }
@@ -652,10 +697,11 @@ export default function App() {
                 onChange={(e) => setMatchLimit(Number(e.target.value))}
                 disabled={busy}
               >
+                <option value={10}>10 matches (fast)</option>
+                <option value={15}>15 matches</option>
                 <option value={20}>20 matches</option>
                 <option value={30}>30 matches</option>
                 <option value={50}>50 matches</option>
-                <option value={80}>80 matches</option>
               </select>
             </label>
             {busy && progress.total > 0 && (

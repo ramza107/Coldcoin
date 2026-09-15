@@ -16,6 +16,12 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  buildFamiliarIndexServer,
+  opendotaGet,
+  pingOpenDota,
+  resolveAccountIdLocal,
+} from './opendota.mjs'
 
 const PORT = Number(process.env.RF_PORT || 17321)
 const HOST = process.env.RF_HOST || '127.0.0.1'
@@ -484,23 +490,53 @@ const server = http.createServer(async (req, res) => {
 
     // Proxy OpenDota so the browser UI on 127.0.0.1 can sync profiles reliably
     if (method === 'GET' && url.pathname.startsWith('/opendota')) {
+      if (url.pathname === '/opendota/_ping' || url.pathname === '/opendota/ping') {
+        try {
+          const ping = await pingOpenDota()
+          sendJson(res, req, 200, ping)
+        } catch (e) {
+          sendJson(res, req, 502, {
+            ok: false,
+            error: e instanceof Error ? e.message : String(e),
+            hint: 'OpenDota unreachable from this PC. Try VPN or retry later.',
+          })
+        }
+        return
+      }
+
       const apiPath = url.pathname.replace(/^\/opendota/, '/api') + url.search
-      const target = `https://api.opendota.com${apiPath}`
       try {
-        const upstream = await fetch(target, {
-          headers: { Accept: 'application/json', 'User-Agent': 'ReplayFace-Companion/1.0' },
-        })
-        const text = await upstream.text()
-        cors(res, req)
-        res.writeHead(upstream.status, {
-          'Content-Type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
-          'Cache-Control': 'no-store',
-        })
-        res.end(text)
+        const data = await opendotaGet(apiPath, { timeoutMs: 20000, retries: 3 })
+        sendJson(res, req, 200, data)
       } catch (e) {
         sendJson(res, req, 502, {
           error: 'OpenDota proxy failed',
           detail: e instanceof Error ? e.message : String(e),
+          hint: 'If this keeps failing, OpenDota may be blocked — try VPN.',
+        })
+      }
+      return
+    }
+
+    // Full Connect sync on companion (avoids browser multi-fetch timeouts)
+    if (method === 'POST' && url.pathname === '/sync') {
+      const body = await readBody(req)
+      const input = body?.account || body?.profile || body?.input || ''
+      const limit = Math.min(80, Math.max(5, Number(body?.matchLimit || 15)))
+      try {
+        let accountId = resolveAccountIdLocal(input)
+        if (accountId == null) {
+          const hits = await opendotaGet(`/api/search?q=${encodeURIComponent(String(input).trim())}`)
+          if (!hits?.length) throw new Error('Player not found')
+          accountId = hits[0].account_id
+        }
+        const index = await buildFamiliarIndexServer(accountId, limit)
+        sendJson(res, req, 200, { ok: true, index })
+      } catch (e) {
+        sendJson(res, req, 502, {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+          hint: 'Cannot reach OpenDota. Check internet or try VPN, then RUN.bat again.',
         })
       }
       return
