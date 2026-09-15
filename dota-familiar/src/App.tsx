@@ -1,17 +1,29 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  absorbMatchIntoIndex,
   buildFamiliarIndex,
+  fetchLatestMatchId,
   fetchMatch,
   fetchPlayer,
   matchPlayersFromDetail,
   rankLabel,
   resolveAccountId,
 } from './lib/opendota'
-import { clearIndex, loadIndex, loadSavedAccount, saveAccountInput, saveIndex } from './lib/storage'
+import {
+  clearIndex,
+  loadIndex,
+  loadLastMatchId,
+  loadSavedAccount,
+  loadWatchEnabled,
+  saveAccountInput,
+  saveIndex,
+  saveLastMatchId,
+  saveWatchEnabled,
+} from './lib/storage'
 import type { CheckedPlayer, FamiliarIndex, FamiliarRecord } from './types'
 import './App.css'
 
-type Tab = 'check' | 'familiar' | 'sync'
+type Tab = 'live' | 'familiar' | 'sync'
 
 function formatAgo(unixSec: number): string {
   const diff = Date.now() / 1000 - unixSec
@@ -37,26 +49,123 @@ function FamiliarBadge({ rec }: { rec: FamiliarRecord }) {
   )
 }
 
+async function enrichMatch(detail: Awaited<ReturnType<typeof fetchMatch>>, index: FamiliarIndex) {
+  const rows = matchPlayersFromDetail(detail, index.ownerAccountId)
+  const enriched: CheckedPlayer[] = []
+  for (const row of rows) {
+    const familiar = row.accountId ? index.players[String(row.accountId)] : undefined
+    let profile = null
+    if (row.accountId) {
+      try {
+        profile = await fetchPlayer(row.accountId)
+      } catch {
+        profile = null
+      }
+    }
+    enriched.push({ ...row, familiar, profile })
+  }
+  return enriched
+}
+
 export default function App() {
   const [accountInput, setAccountInput] = useState(loadSavedAccount())
   const [index, setIndex] = useState<FamiliarIndex | null>(null)
   const [tab, setTab] = useState<Tab>('sync')
-  const [matchId, setMatchId] = useState('')
   const [checked, setChecked] = useState<CheckedPlayer[]>([])
+  const [activeMatchId, setActiveMatchId] = useState<number | null>(loadLastMatchId())
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [error, setError] = useState('')
   const [status, setStatus] = useState('')
   const [query, setQuery] = useState('')
   const [matchLimit, setMatchLimit] = useState(30)
+  const [watch, setWatch] = useState(loadWatchEnabled())
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null)
+  const indexRef = useRef<FamiliarIndex | null>(null)
+  const bootRef = useRef(false)
+  indexRef.current = index
+
+  const loadMatchById = useCallback(async (matchId: number, current: FamiliarIndex, absorbNew: boolean) => {
+    const previousId = loadLastMatchId()
+    const detail = await fetchMatch(matchId)
+    // Badge "played before" should use history BEFORE absorbing this match
+    const enriched = await enrichMatch(detail, current)
+    setChecked(enriched)
+    setActiveMatchId(matchId)
+    setLastCheckedAt(Date.now())
+
+    if (absorbNew && previousId != null && previousId !== matchId) {
+      const next = absorbMatchIntoIndex(current, detail)
+      saveIndex(next)
+      setIndex(next)
+      indexRef.current = next
+    }
+
+    saveLastMatchId(matchId)
+    const familiarCount = enriched.filter((p) => p.familiar && !p.isOwner).length
+    return { matchId, familiarCount, isNew: previousId !== matchId }
+  }, [])
+
+  const pullLatest = useCallback(
+    async (current: FamiliarIndex, absorbNew = true) => {
+      setError('')
+      const latestId = await fetchLatestMatchId(current.ownerAccountId)
+      if (!latestId) {
+        setStatus('No matches found on this account yet')
+        return null
+      }
+      const result = await loadMatchById(latestId, current, absorbNew)
+      setStatus(
+        result.isNew
+          ? `Auto-loaded match ${result.matchId} · ${result.familiarCount} familiar`
+          : `Latest match ${result.matchId} · ${result.familiarCount} familiar`,
+      )
+      return result
+    },
+    [loadMatchById],
+  )
 
   useEffect(() => {
+    if (bootRef.current) return
+    bootRef.current = true
     const saved = loadIndex()
-    if (saved) {
-      setIndex(saved)
-      setTab('check')
+    if (!saved) return
+    setIndex(saved)
+    setTab('live')
+    void (async () => {
+      try {
+        setBusy(true)
+        setStatus('Auto-pulling your latest match…')
+        await pullLatest(saved, false)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : 'Failed to auto-load latest match')
+      } finally {
+        setBusy(false)
+      }
+    })()
+  }, [pullLatest])
+
+  useEffect(() => {
+    if (!watch || !index) return
+    const tick = async () => {
+      const current = indexRef.current
+      if (!current) return
+      try {
+        const latestId = await fetchLatestMatchId(current.ownerAccountId)
+        if (!latestId || latestId === loadLastMatchId()) return
+        setBusy(true)
+        const result = await loadMatchById(latestId, current, true)
+        setStatus(`New match auto-loaded: ${result.matchId} · ${result.familiarCount} familiar`)
+        setTab('live')
+      } catch {
+        // keep polling
+      } finally {
+        setBusy(false)
+      }
     }
-  }, [])
+    const id = window.setInterval(() => void tick(), 45000)
+    return () => window.clearInterval(id)
+  }, [watch, index, loadMatchById])
 
   const familiarList = useMemo(() => {
     if (!index) return []
@@ -79,17 +188,19 @@ export default function App() {
       saveAccountInput(accountInput)
       setStatus('Resolving account…')
       const accountId = await resolveAccountId(accountInput)
-      setStatus('Loading profile & matches…')
+      setStatus('Loading profile & match history…')
       const built = await buildFamiliarIndex(accountId, matchLimit, (done, total) => {
         setProgress({ done, total })
         setStatus(`Scanning matches ${done}/${total}…`)
       })
       saveIndex(built)
       setIndex(built)
-      setTab('check')
-      setStatus(
-        `Synced ${built.matchesScanned} matches · ${Object.keys(built.players).length} players remembered`,
-      )
+      indexRef.current = built
+      setTab('live')
+      setWatch(true)
+      saveWatchEnabled(true)
+      setStatus(`Synced ${built.matchesScanned} matches · auto-loading latest…`)
+      await pullLatest(built, false)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sync failed')
     } finally {
@@ -97,52 +208,41 @@ export default function App() {
     }
   }
 
-  async function handleCheckMatch() {
-    if (!index) {
-      setError('Sync your account first')
-      return
-    }
-    setError('')
+  async function handleRefreshLatest() {
+    if (!index) return
     setBusy(true)
-    setChecked([])
     try {
-      const id = Number(matchId.trim())
-      if (!Number.isFinite(id) || id <= 0) throw new Error('Enter a valid match ID')
-      setStatus('Loading match…')
-      const detail = await fetchMatch(id)
-      const rows = matchPlayersFromDetail(detail, index.ownerAccountId)
-      const enriched: CheckedPlayer[] = []
-      for (const row of rows) {
-        const familiar = row.accountId ? index.players[String(row.accountId)] : undefined
-        let profile = null
-        if (row.accountId) {
-          try {
-            profile = await fetchPlayer(row.accountId)
-          } catch {
-            profile = null
-          }
-        }
-        enriched.push({ ...row, familiar, profile })
-      }
-      setChecked(enriched)
-      setStatus(`Match ${id} checked`)
+      await pullLatest(index, true)
+      setTab('live')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Match check failed')
+      setError(e instanceof Error ? e.message : 'Refresh failed')
     } finally {
       setBusy(false)
     }
   }
 
+  function toggleWatch() {
+    const next = !watch
+    setWatch(next)
+    saveWatchEnabled(next)
+    setStatus(next ? 'Auto-watch ON — checking OpenDota every ~45s' : 'Auto-watch OFF')
+  }
+
   function handleReset() {
     clearIndex()
+    localStorage.removeItem('dota-familiar:last-match:v1')
     setIndex(null)
     setChecked([])
+    setActiveMatchId(null)
+    setWatch(false)
+    saveWatchEnabled(false)
     setTab('sync')
     setStatus('Cleared local data')
   }
 
   const radiant = checked.filter((p) => p.team === 'radiant')
   const dire = checked.filter((p) => p.team === 'dire')
+  const familiarInMatch = checked.filter((p) => p.familiar && !p.isOwner).length
 
   return (
     <div className="app">
@@ -152,7 +252,7 @@ export default function App() {
           <span className="mark">RF</span>
           <div>
             <strong>ReplayFace</strong>
-            <em>Dota familiar player radar</em>
+            <em>Auto familiar radar for Dota</em>
           </div>
         </div>
         {index && (
@@ -168,25 +268,25 @@ export default function App() {
 
       <main className="shell">
         <section className="hero">
-          <p className="eyebrow">Know your lobby</p>
-          <h1>Mark players you already faced</h1>
+          <p className="eyebrow">No match links needed</p>
+          <h1>Auto-pull your games</h1>
           <p className="lede">
-            Sync your OpenDota history, then paste any match ID. Allies and enemies you have seen before get
-            highlighted instantly.
+            Connect once. ReplayFace pulls your latest OpenDota match automatically and highlights players you already
+            faced. Keep auto-watch on to update after every game.
           </p>
         </section>
 
         <nav className="tabs">
           <button type="button" className={tab === 'sync' ? 'on' : ''} onClick={() => setTab('sync')}>
-            Sync
+            Connect
           </button>
           <button
             type="button"
-            className={tab === 'check' ? 'on' : ''}
-            onClick={() => setTab('check')}
+            className={tab === 'live' ? 'on' : ''}
+            onClick={() => setTab('live')}
             disabled={!index}
           >
-            Check match
+            Live match
           </button>
           <button
             type="button"
@@ -203,31 +303,30 @@ export default function App() {
 
         {tab === 'sync' && (
           <section className="panel">
-            <h2>Connect Steam / OpenDota</h2>
+            <h2>Connect once</h2>
             <p className="help">
-              Paste profile URL, SteamID64, or account ID. Example:{' '}
-              <code>https://www.opendota.com/players/86745912</code>
+              Profile is needed only for first setup. After that matches are pulled automatically — no match IDs.
             </p>
             <label className="field">
               <span>Your profile</span>
               <input
                 value={accountInput}
                 onChange={(e) => setAccountInput(e.target.value)}
-                placeholder="OpenDota / Steam URL or ID"
+                placeholder="OpenDota / Steam URL or account ID"
                 disabled={busy}
               />
             </label>
             <label className="field inline">
-              <span>Matches to scan</span>
+              <span>History depth</span>
               <select
                 value={matchLimit}
                 onChange={(e) => setMatchLimit(Number(e.target.value))}
                 disabled={busy}
               >
-                <option value={20}>20 (fast)</option>
-                <option value={30}>30</option>
-                <option value={50}>50</option>
-                <option value={80}>80 (slower)</option>
+                <option value={20}>20 matches</option>
+                <option value={30}>30 matches</option>
+                <option value={50}>50 matches</option>
+                <option value={80}>80 matches</option>
               </select>
             </label>
             {busy && progress.total > 0 && (
@@ -242,7 +341,7 @@ export default function App() {
                 disabled={busy || !accountInput.trim()}
                 onClick={handleConnectAndSync}
               >
-                {busy ? 'Syncing…' : index ? 'Re-sync history' : 'Sync & build familiar list'}
+                {busy ? 'Working…' : index ? 'Re-sync & auto-load' : 'Connect & auto-load'}
               </button>
               {index && (
                 <button type="button" className="ghost" disabled={busy} onClick={handleReset}>
@@ -251,41 +350,54 @@ export default function App() {
               )}
             </div>
             <p className="fineprint">
-              Data stays in your browser (localStorage). Uses public OpenDota API. Private Steam profiles may hide
-              names.
+              OpenDota usually shows a match a few minutes after it ends. Draft lobby before game start needs a desktop
+              overlay later — web apps cannot read your live Dota client directly.
             </p>
           </section>
         )}
 
-        {tab === 'check' && index && (
+        {tab === 'live' && index && (
           <section className="panel">
-            <h2>Check a match</h2>
-            <p className="help">Get match ID from OpenDota, Dotabuff, or the post-game scoreboard.</p>
-            <div className="row">
-              <label className="field grow">
-                <span>Match ID</span>
-                <input
-                  value={matchId}
-                  onChange={(e) => setMatchId(e.target.value)}
-                  placeholder="e.g. 8123456789"
-                  disabled={busy}
-                />
-              </label>
-              <button
-                type="button"
-                className="primary"
-                disabled={busy || !matchId.trim()}
-                onClick={handleCheckMatch}
-              >
-                {busy ? 'Checking…' : 'Scan lobby'}
-              </button>
+            <div className="row spread">
+              <div>
+                <h2>Your latest match</h2>
+                <p className="help" style={{ marginBottom: 0 }}>
+                  {activeMatchId ? (
+                    <>
+                      Match <code>{activeMatchId}</code>
+                      {lastCheckedAt ? ` · updated ${new Date(lastCheckedAt).toLocaleTimeString()}` : ''}
+                      {familiarInMatch ? ` · ${familiarInMatch} familiar` : ''}
+                    </>
+                  ) : (
+                    'Waiting for OpenDota…'
+                  )}
+                </p>
+              </div>
+              <div className="row">
+                <button type="button" className={watch ? 'primary' : 'ghost'} disabled={busy} onClick={toggleWatch}>
+                  {watch ? 'Auto-watch ON' : 'Auto-watch OFF'}
+                </button>
+                <button type="button" className="ghost" disabled={busy} onClick={handleRefreshLatest}>
+                  {busy ? 'Pulling…' : 'Refresh now'}
+                </button>
+              </div>
             </div>
 
-            {checked.length > 0 && (
+            {watch && (
+              <div className="banner ok" style={{ marginTop: '0.9rem' }}>
+                Auto-watch is on. Checking OpenDota every ~45s for a new finished match.
+              </div>
+            )}
+
+            {checked.length > 0 ? (
               <div className="teams">
                 <TeamBlock title="Radiant" players={radiant} />
                 <TeamBlock title="Dire" players={dire} />
               </div>
+            ) : (
+              <p className="help" style={{ marginTop: '1rem' }}>
+                No match loaded yet. Click refresh, or wait for auto-watch.
+              </p>
             )}
           </section>
         )}

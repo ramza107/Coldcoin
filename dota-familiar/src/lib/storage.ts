@@ -2,6 +2,8 @@ import type { FamiliarIndex } from '../types'
 
 const KEY = 'dota-familiar:index:v1'
 const ACCOUNT_KEY = 'dota-familiar:account:v1'
+const WATCH_KEY = 'dota-familiar:watch:v1'
+const LAST_MATCH_KEY = 'dota-familiar:last-match:v1'
 
 export function loadIndex(): FamiliarIndex | null {
   try {
@@ -26,4 +28,23 @@ export function loadSavedAccount(): string {
 
 export function saveAccountInput(value: string) {
   localStorage.setItem(ACCOUNT_KEY, value)
+}
+
+export function loadWatchEnabled(): boolean {
+  return localStorage.getItem(WATCH_KEY) === '1'
+}
+
+export function saveWatchEnabled(on: boolean) {
+  localStorage.setItem(WATCH_KEY, on ? '1' : '0')
+}
+
+export function loadLastMatchId(): number | null {
+  const raw = localStorage.getItem(LAST_MATCH_KEY)
+  if (!raw) return null
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
+export function saveLastMatchId(matchId: number) {
+  localStorage.setItem(LAST_MATCH_KEY, String(matchId))
 }

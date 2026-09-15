@@ -90,8 +90,76 @@ export async function fetchRecentMatches(accountId: AccountId, limit = 50): Prom
   return api(`/players/${accountId}/matches?limit=${limit}`)
 }
 
+export async function fetchLatestMatchId(accountId: AccountId): Promise<number | null> {
+  const recent = await fetchRecentMatches(accountId, 1)
+  return recent[0]?.match_id ?? null
+}
+
 export async function fetchMatch(matchId: number): Promise<MatchDetail> {
   return api(`/matches/${matchId}`)
+}
+
+/** Merge one match into an existing familiar index (for auto-watch updates). */
+export function absorbMatchIntoIndex(
+  index: FamiliarIndex,
+  detail: MatchDetail,
+): FamiliarIndex {
+  const ownerAccountId = index.ownerAccountId
+  const ownerRow = detail.players.find((p) => p.account_id === ownerAccountId)
+  if (!ownerRow) return index
+
+  const ownerTeam = slotTeam(ownerRow.player_slot)
+  const ownerWon =
+    (ownerTeam === 'radiant' && detail.radiant_win) ||
+    (ownerTeam === 'dire' && !detail.radiant_win)
+
+  const players = { ...index.players }
+
+  for (const p of detail.players) {
+    if (!p.account_id || p.account_id === ownerAccountId) continue
+    const key = String(p.account_id)
+    const team = slotTeam(p.player_slot)
+    const asAlly = team === ownerTeam
+    const base: FamiliarRecord = players[key]
+      ? { ...players[key] }
+      : {
+          accountId: p.account_id,
+          personaname: p.personaname || `Player ${p.account_id}`,
+          games: 0,
+          asAlly: 0,
+          asEnemy: 0,
+          winsWith: 0,
+          winsAgainst: 0,
+          lastMatchId: detail.match_id,
+          lastPlayedAt: detail.start_time,
+        }
+
+    // Avoid double-counting the same match
+    if (base.lastMatchId === detail.match_id && base.games > 0 && players[key]) {
+      continue
+    }
+
+    base.personaname = p.personaname || base.personaname
+    base.games += 1
+    if (asAlly) {
+      base.asAlly += 1
+      if (ownerWon) base.winsWith += 1
+    } else {
+      base.asEnemy += 1
+      if (ownerWon) base.winsAgainst += 1
+    }
+    if (detail.start_time >= base.lastPlayedAt) {
+      base.lastPlayedAt = detail.start_time
+      base.lastMatchId = detail.match_id
+    }
+    players[key] = base
+  }
+
+  return {
+    ...index,
+    players,
+    syncedAt: Date.now(),
+  }
 }
 
 function slotTeam(slot: number): 'radiant' | 'dire' {
