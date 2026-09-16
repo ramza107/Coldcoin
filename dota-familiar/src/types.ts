@@ -9,6 +9,14 @@ export interface PlayerProfile {
   leaderboardRank?: number | null
   wins?: number
   losses?: number
+  /** Where the nick hit came from: opendota / steam / dotabuff / stratz */
+  source?: string
+}
+
+export interface NickSearchLink {
+  provider: string
+  label: string
+  url: string
 }
 
 export interface FamiliarRecord {

@@ -40,6 +40,7 @@ import type {
   FamiliarRecord,
   LiveLobby,
   LiveLobbyPlayer,
+  NickSearchLink,
   PlayerProfile,
   RecentMatchBrief,
 } from './types'
@@ -233,6 +234,8 @@ export default function App() {
   const [enemyPaste, setEnemyPaste] = useState('')
   const [nickHits, setNickHits] = useState<PlayerProfile[]>([])
   const [nickSearchLabel, setNickSearchLabel] = useState('')
+  const [nickLinks, setNickLinks] = useState<NickSearchLink[]>([])
+  const [nickProviders, setNickProviders] = useState<string[]>([])
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null)
   const indexRef = useRef<FamiliarIndex | null>(null)
   const bootRef = useRef(false)
@@ -596,25 +599,31 @@ export default function App() {
     }
   }
 
-  async function lookupNickHits(nick: string): Promise<PlayerProfile[]> {
+  async function lookupNickHits(
+    nick: string,
+  ): Promise<{ hits: PlayerProfile[]; providers: string[]; links: NickSearchLink[] }> {
     const local = index ? searchFamiliarFuzzy(index, nick) : []
-    // Show local familiar hits immediately while OpenDota runs
     if (local.length) {
       setNickHits(local)
       setNickSearchLabel(normalizeNick(nick) || nick)
     }
-    let remote: PlayerProfile[] = []
     try {
-      remote = await searchPlayers(nick, companionOnline ? companionUrl : undefined)
+      const remote = await searchPlayers(nick, companionOnline ? companionUrl : undefined)
+      if (remote.links?.length) setNickLinks(remote.links)
+      if (remote.providers?.length) setNickProviders(remote.providers)
+      const byId = new Map<number, PlayerProfile>()
+      for (const p of [...local, ...remote.hits]) {
+        if (!byId.has(p.accountId)) byId.set(p.accountId, p)
+      }
+      return {
+        hits: [...byId.values()],
+        providers: remote.providers || [],
+        links: remote.links || [],
+      }
     } catch (e) {
-      if (local.length) return local
+      if (local.length) return { hits: local, providers: ['familiar'], links: [] }
       throw e
     }
-    const byId = new Map<number, PlayerProfile>()
-    for (const p of [...local, ...remote]) {
-      if (!byId.has(p.accountId)) byId.set(p.accountId, p)
-    }
-    return [...byId.values()]
   }
 
   async function resolveNicksToPlayers(
@@ -639,7 +648,7 @@ export default function App() {
         continue
       }
 
-      const hits = await lookupNickHits(nick)
+      const { hits } = await lookupNickHits(nick)
       const confident = bestConfidentNickHit(hits, nick)
       if (confident) {
         players.push({
@@ -679,6 +688,8 @@ export default function App() {
     await pushOrApplyPasteLobby(enemies, myTeam)
     setNickHits([])
     setNickSearchLabel('')
+    setNickLinks([])
+    setNickProviders([])
     setEnemyPaste('')
     setStatus(`Picked ${hit.personaname} · check avatar matched the lobby`)
   }
@@ -689,6 +700,8 @@ export default function App() {
     setBusy(true)
     setNickHits([])
     setNickSearchLabel('')
+    setNickLinks([])
+    setNickProviders([])
     try {
       const myTeam = lobby?.myTeam || 'radiant'
       const parsed = parseEnemyPaste(enemyPaste, myTeam)
@@ -699,17 +712,17 @@ export default function App() {
         enemies = [...enemies, ...resolved.players]
         if (resolved.leftoverLabel) {
           setNickHits(resolved.leftoverHits)
-          setNickSearchLabel(resolved.leftoverLabel)
+          setNickSearchLabel(normalizeNick(resolved.leftoverLabel) || resolved.leftoverLabel)
           if (enemies.length) {
             await pushOrApplyPasteLobby(enemies, myTeam)
           }
           if (!resolved.leftoverHits.length) {
             throw new Error(
-              `Ник “${normalizeNick(resolved.leftoverLabel) || resolved.leftoverLabel}” не найден в OpenDota. После игры: Last finished → Refresh (там будут ID). Или вставь ссылку профиля.`,
+              `Ник “${normalizeNick(resolved.leftoverLabel) || resolved.leftoverLabel}” не найден. Открой ссылки Dotabuff/Steam/Stratz ниже или после игры: Last finished → Refresh.`,
             )
           }
           setStatus(
-            `Pick the right avatar for “${resolved.leftoverLabel}” — nicks are not unique`,
+            `Выбери аватар для “${normalizeNick(resolved.leftoverLabel) || resolved.leftoverLabel}” (ники не уникальны)`,
           )
           return
         }
@@ -755,10 +768,12 @@ export default function App() {
     setError('')
     setBusy(true)
     setNickHits([])
+    setNickLinks([])
+    setNickProviders([])
     try {
       const nick = enemyPaste.trim().split(/[\n,;]/)[0].trim()
       const label = normalizeNick(nick) || nick
-      setStatus(`Searching “${label}”…`)
+      setStatus(`Searching “${label}” (OpenDota + Steam + …)…`)
       const known = familiarByNick(index, nick)
       if (known) {
         await applyEnemyHit({
@@ -768,22 +783,37 @@ export default function App() {
         })
         return
       }
-      const hits = await lookupNickHits(nick)
-      const confident = bestConfidentNickHit(hits, nick)
+      const found = await lookupNickHits(nick)
+      const confident = bestConfidentNickHit(found.hits, nick)
       if (confident) {
         await applyEnemyHit(confident)
         return
       }
       setNickSearchLabel(label)
-      setNickHits(hits)
-      if (!hits.length) {
+      setNickHits(found.hits)
+      if (!found.hits.length) {
         throw new Error(
-          `Ник “${label}” не найден. Если OpenDota search лежит — после матча жми Last finished → Refresh. Либо вставь ссылку OpenDota/Dotabuff.`,
+          `Ник “${label}” не найден ни в одном источнике. Открой Dotabuff/Steam/Stratz ниже или после матча: Last finished → Refresh.`,
         )
       }
-      setStatus(`Choose the matching avatar for “${label}”`)
+      setStatus(
+        `Выбери аватар для “${label}”${found.providers.length ? ` · ${found.providers.join('+')}` : ''}`,
+      )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Nick search failed')
+      // still show external links for this nick
+      const nick = enemyPaste.trim().split(/[\n,;]/)[0].trim()
+      const label = normalizeNick(nick) || nick
+      if (label) {
+        const enc = encodeURIComponent(label)
+        setNickSearchLabel(label)
+        setNickLinks([
+          { provider: 'dotabuff', label: 'Dotabuff', url: `https://www.dotabuff.com/search?q=${enc}` },
+          { provider: 'stratz', label: 'Stratz', url: `https://stratz.com/players?q=${enc}` },
+          { provider: 'steam', label: 'Steam', url: `https://steamcommunity.com/search/users/?text=${enc}` },
+          { provider: 'opendota', label: 'OpenDota', url: `https://www.opendota.com/search?q=${enc}` },
+        ])
+      }
     } finally {
       setBusy(false)
     }
@@ -1046,13 +1076,13 @@ export default function App() {
             <div className="paste-box">
               <h3>Paste enemies / nick lookup</h3>
               <p className="help">
-                Лучше полный ник (без «…») или ссылка OpenDota/Dotabuff. Поиск сначала по знакомым, потом OpenDota —
-                с аватарками. Обрезанные ники из UI Dota часто не находятся.
+                Поиск: знакомые → OpenDota → Steam → Dotabuff/Stratz (если доступны). Если API лежит — открой
+                ссылки ниже и вставь URL профиля. Полный ник без «…» лучше.
               </p>
               <textarea
                 value={enemyPaste}
                 onChange={(e) => setEnemyPaste(e.target.value)}
-                placeholder={'MESIAS\njanDerGOD\nhttps://www.opendota.com/players/…'}
+                placeholder={'friskyrook\nhttps://www.dotabuff.com/players/…'}
                 rows={3}
                 disabled={busy}
               />
@@ -1075,49 +1105,83 @@ export default function App() {
                 </button>
               </div>
 
-              {nickHits.length > 0 && (
+              {(nickHits.length > 0 || nickLinks.length > 0) && (
                 <div className="nick-hits">
-                  <h4>
-                    Candidates for “{nickSearchLabel}” — pick by avatar
-                  </h4>
-                  <ul>
-                    {nickHits.map((hit) => (
-                      <li key={hit.accountId}>
-                        <button
-                          type="button"
-                          className="nick-hit"
-                          disabled={busy}
-                          onClick={() => handlePickNickCandidate(hit)}
-                        >
-                          {hit.avatarfull ? (
-                            <img src={hit.avatarfull} alt="" />
-                          ) : (
-                            <span className="nick-hit-fallback">?</span>
-                          )}
-                          <span>
-                            <b>{hit.personaname}</b>
-                            <em>ID {hit.accountId}</em>
-                          </span>
-                        </button>
-                        <div className="links">
-                          <a
-                            href={`https://www.dotabuff.com/players/${hit.accountId}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Dotabuff
+                  {nickHits.length > 0 && (
+                    <>
+                      <h4>
+                        Candidates for “{nickSearchLabel}”
+                        {nickProviders.length ? ` · ${nickProviders.join(' + ')}` : ''} — pick by avatar
+                      </h4>
+                      <ul>
+                        {nickHits.map((hit) => (
+                          <li key={hit.accountId}>
+                            <button
+                              type="button"
+                              className="nick-hit"
+                              disabled={busy}
+                              onClick={() => handlePickNickCandidate(hit)}
+                            >
+                              {hit.avatarfull ? (
+                                <img src={hit.avatarfull} alt="" />
+                              ) : (
+                                <span className="nick-hit-fallback">?</span>
+                              )}
+                              <span>
+                                <b>{hit.personaname}</b>
+                                <em>
+                                  ID {hit.accountId}
+                                  {hit.source ? ` · ${hit.source}` : ''}
+                                </em>
+                              </span>
+                            </button>
+                            <div className="links">
+                              <a
+                                href={`https://www.dotabuff.com/players/${hit.accountId}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Dotabuff
+                              </a>
+                              <a
+                                href={`https://www.opendota.com/players/${hit.accountId}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                OpenDota
+                              </a>
+                              <a
+                                href={`https://stratz.com/players/${hit.accountId}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Stratz
+                              </a>
+                              <a
+                                href={`https://steamcommunity.com/profiles/${accountIdToSteam64(hit.accountId)}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Steam
+                              </a>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  {nickLinks.length > 0 && (
+                    <div className="ext-search">
+                      <h4>Искать вручную</h4>
+                      <div className="links">
+                        {nickLinks.map((l) => (
+                          <a key={l.provider} href={l.url} target="_blank" rel="noreferrer">
+                            {l.label}
                           </a>
-                          <a
-                            href={`https://www.opendota.com/players/${hit.accountId}`}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            OpenDota
-                          </a>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

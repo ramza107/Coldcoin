@@ -541,16 +541,28 @@ const server = http.createServer(async (req, res) => {
           q,
           hits,
           degraded,
+          providers: Array.isArray(result) ? undefined : result.providers,
+          links: Array.isArray(result) ? undefined : result.links,
+          errors: Array.isArray(result) ? undefined : result.errors,
           error: Array.isArray(result) ? undefined : result.error,
           ms: Date.now() - started,
         })
       } catch (e) {
+        const qSafe = String(body?.q || '').trim()
         sendJson(res, req, 502, {
           ok: false,
           degraded: true,
           error: e instanceof Error ? e.message : String(e),
           hits: [],
-          hint: 'OpenDota search slow/blocked — try VPN or paste OpenDota link.',
+          links: qSafe
+            ? [
+                { provider: 'dotabuff', label: 'Dotabuff', url: `https://www.dotabuff.com/search?q=${encodeURIComponent(qSafe)}` },
+                { provider: 'stratz', label: 'Stratz', url: `https://stratz.com/players?q=${encodeURIComponent(qSafe)}` },
+                { provider: 'steam', label: 'Steam', url: `https://steamcommunity.com/search/users/?text=${encodeURIComponent(qSafe)}` },
+                { provider: 'opendota', label: 'OpenDota', url: `https://www.opendota.com/search?q=${encodeURIComponent(qSafe)}` },
+              ]
+            : [],
+          hint: 'Try Steam/Dotabuff links below, or paste a profile URL.',
         })
       }
       return

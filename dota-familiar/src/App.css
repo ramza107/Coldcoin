@@ -513,6 +513,15 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
   color: var(--muted);
   font-size: 0.78rem;
 }
+.ext-search {
+  margin-top: 0.85rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+.ext-search h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.88rem;
+}
 textarea {
   width: 100%;
   border: 1px solid var(--line);
