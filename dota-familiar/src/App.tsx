@@ -470,11 +470,28 @@ export default function App() {
   async function handleRefreshLatest() {
     if (!index) return
     setBusy(true)
+    setError('')
+    setStatus('Загружаю последний матч через OpenDota…')
     try {
+      // If we already know a match id but roster failed to load, retry that first
+      if (activeMatchId && checked.length === 0) {
+        try {
+          await loadMatchById(activeMatchId, index, false)
+          setTab('history')
+          setStatus(`Match ${activeMatchId} loaded`)
+          return
+        } catch {
+          // fall through to latest
+        }
+      }
       await pullLatest(index, true)
       setTab('history')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Refresh failed')
+      setError(
+        e instanceof Error
+          ? e.message
+          : 'OpenDota не ответил. Нажми Refresh ещё раз или включи VPN.',
+      )
     } finally {
       setBusy(false)
     }
@@ -1144,7 +1161,8 @@ export default function App() {
               </div>
             ) : (
               <p className="help" style={{ marginTop: '1rem' }}>
-                No finished match loaded yet.
+                Матч ещё не загружен. Жми <b>Refresh now</b>. Если красная ошибка OpenDota — подожди 10–20 сек и
+                нажми снова, либо VPN (api.opendota.com иногда недоступен).
               </p>
             )}
           </section>

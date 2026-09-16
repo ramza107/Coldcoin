@@ -38,25 +38,45 @@ export async function resolveAccountId(input: string): Promise<AccountId> {
   return hits[0].accountId
 }
 
-async function api<T>(path: string, timeoutMs = 25000): Promise<T> {
+async function api<T>(path: string, timeoutMs = 18000): Promise<T> {
   const host = typeof window !== 'undefined' ? window.location.hostname : ''
   const local = host === '127.0.0.1' || host === 'localhost'
+  // Always prefer same-origin companion proxy when UI is served locally
   const base = import.meta.env.DEV || local ? '/opendota' : 'https://api.opendota.com/api'
 
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-  try {
-    const res = await fetch(`${base}${path}`, { signal: ctrl.signal, cache: 'no-store' })
-    if (!res.ok) throw new Error(`OpenDota error ${res.status}`)
-    return (await res.json()) as T
-  } catch (e) {
-    if (e instanceof Error && e.name === 'AbortError') {
-      throw new Error('OpenDota timeout — check internet / companion proxy')
+  let lastErr: Error | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      const res = await fetch(`${base}${path}`, { signal: ctrl.signal, cache: 'no-store' })
+      if (!res.ok) {
+        // companion may return JSON { error, hint }
+        let detail = `OpenDota error ${res.status}`
+        try {
+          const body = (await res.json()) as { detail?: string; hint?: string; error?: string }
+          detail = body.detail || body.error || detail
+          if (body.hint) detail = `${detail} — ${body.hint}`
+        } catch {
+          // ignore
+        }
+        throw new Error(detail)
+      }
+      return (await res.json()) as T
+    } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        lastErr = new Error(
+          'OpenDota не отвечает (таймаут). Попробуй Refresh ещё раз или VPN — api.opendota.com часто тупит/блокируется.',
+        )
+      } else {
+        lastErr = e instanceof Error ? e : new Error(String(e))
+      }
+      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)))
+    } finally {
+      clearTimeout(timer)
     }
-    throw e
-  } finally {
-    clearTimeout(timer)
   }
+  throw lastErr || new Error('OpenDota request failed')
 }
 
 /** Strip lobby truncation / clan tags so OpenDota search has a chance. */

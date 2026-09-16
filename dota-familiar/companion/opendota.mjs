@@ -1,6 +1,12 @@
 import https from 'node:https'
 import http from 'node:http'
 
+const agent = new https.Agent({
+  keepAlive: true,
+  family: 4, // OpenDota IPv6 often hangs in some regions
+  maxSockets: 8,
+})
+
 /**
  * Fetch JSON from OpenDota with timeout + retries (Node side).
  * Browser often hangs; companion is more reliable.
@@ -14,27 +20,38 @@ export function opendotaGet(apiPath, { timeoutMs = 20000, retries = 3 } = {}) {
       const req = https.get(
         url,
         {
+          agent,
           headers: {
             Accept: 'application/json',
-            'User-Agent': 'ReplayFace-Companion/1.1',
+            'User-Agent': 'ReplayFace-Companion/1.2',
+            'Accept-Encoding': 'identity',
           },
           timeout: timeoutMs,
+          family: 4,
         },
         (res) => {
-          const chunks = []
-          res.on('data', (c) => chunks.push(c))
-          res.on('end', () => {
-            const text = Buffer.concat(chunks).toString('utf8')
-            if (res.statusCode && res.statusCode >= 400) {
-              reject(new Error(`OpenDota HTTP ${res.statusCode}: ${text.slice(0, 180)}`))
-              return
-            }
-            try {
-              resolve(JSON.parse(text))
-            } catch (e) {
-              reject(new Error(`OpenDota bad JSON: ${text.slice(0, 120)}`))
-            }
-          })
+          // follow one redirect
+          if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume()
+            https
+              .get(
+                res.headers.location,
+                {
+                  agent,
+                  headers: { Accept: 'application/json', 'User-Agent': 'ReplayFace-Companion/1.2' },
+                  timeout: timeoutMs,
+                  family: 4,
+                },
+                (res2) => collect(res2, resolve, reject),
+              )
+              .on('timeout', function () {
+                this.destroy()
+                reject(new Error(`OpenDota timeout after ${timeoutMs}ms`))
+              })
+              .on('error', reject)
+            return
+          }
+          collect(res, resolve, reject)
         },
       )
       req.on('timeout', () => {
@@ -44,6 +61,23 @@ export function opendotaGet(apiPath, { timeoutMs = 20000, retries = 3 } = {}) {
       req.on('error', reject)
     })
 
+  function collect(res, resolve, reject) {
+    const chunks = []
+    res.on('data', (c) => chunks.push(c))
+    res.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf8')
+      if (res.statusCode && res.statusCode >= 400) {
+        reject(new Error(`OpenDota HTTP ${res.statusCode}: ${text.slice(0, 180)}`))
+        return
+      }
+      try {
+        resolve(JSON.parse(text))
+      } catch {
+        reject(new Error(`OpenDota bad JSON: ${text.slice(0, 120)}`))
+      }
+    })
+  }
+
   return (async () => {
     let last
     for (let i = 0; i < retries; i++) {
@@ -51,7 +85,7 @@ export function opendotaGet(apiPath, { timeoutMs = 20000, retries = 3 } = {}) {
         return await once()
       } catch (e) {
         last = e
-        await new Promise((r) => setTimeout(r, 600 * (i + 1)))
+        await new Promise((r) => setTimeout(r, 400 * (i + 1)))
       }
     }
     throw last
