@@ -38,13 +38,13 @@ export async function resolveAccountId(input: string): Promise<AccountId> {
   return hits[0].accountId
 }
 
-async function api<T>(path: string): Promise<T> {
+async function api<T>(path: string, timeoutMs = 25000): Promise<T> {
   const host = typeof window !== 'undefined' ? window.location.hostname : ''
   const local = host === '127.0.0.1' || host === 'localhost'
   const base = import.meta.env.DEV || local ? '/opendota' : 'https://api.opendota.com/api'
 
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 25000)
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
     const res = await fetch(`${base}${path}`, { signal: ctrl.signal, cache: 'no-store' })
     if (!res.ok) throw new Error(`OpenDota error ${res.status}`)
@@ -59,35 +59,182 @@ async function api<T>(path: string): Promise<T> {
   }
 }
 
-export async function searchPlayers(q: string): Promise<PlayerProfile[]> {
+/** Strip lobby truncation / clan tags so OpenDota search has a chance. */
+export function normalizeNick(raw: string): string {
+  return raw
+    .replace(/\u2026/g, '...')
+    .replace(/\.{2,}$/g, '')
+    .replace(/\[[^\]]*]/g, ' ')
+    .replace(/[«»""„]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function nickQueryVariants(raw: string): string[] {
+  const base = normalizeNick(raw)
+  if (!base) return []
+  const out: string[] = []
+  const push = (s: string) => {
+    const t = s.trim()
+    if (t.length >= 2 && !out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t)
+  }
+  push(base)
+  push(base.replace(/[^\p{L}\p{N}_.\- ]+/gu, ' ').replace(/\s+/g, ' '))
+  const noSpace = base.replace(/\s+/g, '')
+  if (noSpace.length >= 3) push(noSpace)
+  const first = base.split(/\s+/)[0]
+  if (first && first.length >= 3) push(first)
+  // Truncated lobby names: keep a solid prefix for OpenDota
+  if (base.length >= 8) push(base.slice(0, Math.min(12, base.length)))
+  if (base.length >= 6) push(base.slice(0, 6))
+  return out.slice(0, 4)
+}
+
+function nickScore(personaname: string, needle: string): number {
+  const n = personaname.toLowerCase()
+  const q = needle.toLowerCase()
+  if (n === q) return 100
+  if (n.startsWith(q)) return 80
+  if (n.includes(q)) return 60
+  const core = q.replace(/[^a-z0-9а-яё]/gi, '')
+  const nc = n.replace(/[^a-z0-9а-яё]/gi, '')
+  if (core && nc === core) return 90
+  if (core && nc.startsWith(core)) return 70
+  if (core && nc.includes(core)) return 40
+  return 10
+}
+
+const searchCache = new Map<string, { at: number; hits: PlayerProfile[] }>()
+const SEARCH_CACHE_MS = 5 * 60 * 1000
+
+export function searchFamiliarFuzzy(index: FamiliarIndex, nick: string): PlayerProfile[] {
+  const variants = nickQueryVariants(nick)
+  if (!variants.length) return []
+  const scored: Array<{ p: PlayerProfile; score: number }> = []
+  for (const rec of Object.values(index.players)) {
+    let best = 0
+    for (const v of variants) best = Math.max(best, nickScore(rec.personaname, v))
+    if (best >= 40) {
+      scored.push({
+        p: {
+          accountId: rec.accountId,
+          personaname: rec.personaname,
+          avatarfull: rec.avatar,
+        },
+        score: best,
+      })
+    }
+  }
+  scored.sort((a, b) => b.score - a.score)
+  return scored.slice(0, 12).map((s) => s.p)
+}
+
+async function searchOpenDotaOnce(q: string): Promise<PlayerProfile[]> {
+  const data = await api<Array<{ account_id: number; personaname: string; avatarfull?: string }>>(
+    `/search?q=${encodeURIComponent(q)}`,
+    9000,
+  )
+  return (Array.isArray(data) ? data : []).slice(0, 20).map((p) => ({
+    accountId: p.account_id,
+    personaname: p.personaname || `Player ${p.account_id}`,
+    avatarfull: p.avatarfull,
+  }))
+}
+
+/** Companion-backed nick search: faster timeouts, variants, no triple-retry hang. */
+export async function searchPlayersViaCompanion(
+  companionRoot: string,
+  nick: string,
+): Promise<PlayerProfile[]> {
+  const root = companionRoot.replace(/\/$/, '')
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 12000)
+  try {
+    const res = await fetch(`${root}/search-nick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: nick }),
+      signal: ctrl.signal,
+      cache: 'no-store',
+    })
+    if (!res.ok) throw new Error(`search-nick ${res.status}`)
+    const data = (await res.json()) as { hits?: Array<{ account_id?: number; accountId?: number; personaname?: string; avatarfull?: string }> }
+    return (data.hits || [])
+      .map((p) => ({
+        accountId: Number(p.accountId ?? p.account_id),
+        personaname: p.personaname || `Player ${p.accountId ?? p.account_id}`,
+        avatarfull: p.avatarfull,
+      }))
+      .filter((p) => Number.isFinite(p.accountId))
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+export async function searchPlayers(q: string, companionUrl?: string): Promise<PlayerProfile[]> {
   const query = q.trim()
   if (!query) return []
-  const data = await api<Array<{ account_id: number; personaname: string; avatarfull?: string }>>(
-    `/search?q=${encodeURIComponent(query)}`,
-  )
-  const needle = query.toLowerCase()
-  return data
+  const cacheKey = query.toLowerCase()
+  const cached = searchCache.get(cacheKey)
+  if (cached && Date.now() - cached.at < SEARCH_CACHE_MS) return cached.hits
+
+  const variants = nickQueryVariants(query)
+  const needle = normalizeNick(query) || query
+  let hits: PlayerProfile[] = []
+
+  if (companionUrl) {
+    try {
+      hits = await searchPlayersViaCompanion(companionUrl, query)
+    } catch {
+      hits = []
+    }
+  }
+
+  if (!hits.length) {
+    const batches = await Promise.all(
+      variants.map(async (v) => {
+        try {
+          return await searchOpenDotaOnce(v)
+        } catch {
+          return [] as PlayerProfile[]
+        }
+      }),
+    )
+    const byId = new Map<number, PlayerProfile>()
+    for (const list of batches) {
+      for (const p of list) {
+        if (!byId.has(p.accountId)) byId.set(p.accountId, p)
+      }
+    }
+    hits = [...byId.values()]
+  }
+
+  hits = hits
+    .map((p) => ({ p, score: nickScore(p.personaname, needle) }))
+    .sort((a, b) => b.score - a.score)
+    .map((x) => x.p)
     .slice(0, 16)
-    .map((p) => ({
-      accountId: p.account_id,
-      personaname: p.personaname,
-      avatarfull: p.avatarfull,
-    }))
-    .sort((a, b) => {
-      const an = a.personaname.toLowerCase()
-      const bn = b.personaname.toLowerCase()
-      const aExact = an === needle ? 0 : an.startsWith(needle) ? 1 : 2
-      const bExact = bn === needle ? 0 : bn.startsWith(needle) ? 1 : 2
-      return aExact - bExact
-    })
+
+  searchCache.set(cacheKey, { at: Date.now(), hits })
+  return hits
 }
 
 /** Prefer exact nick among search hits; otherwise leave for manual pick. */
 export function bestExactNickHit(hits: PlayerProfile[], nick: string): PlayerProfile | null {
-  const needle = nick.trim().toLowerCase()
+  const needle = normalizeNick(nick).toLowerCase() || nick.trim().toLowerCase()
   if (!needle) return null
-  const exact = hits.filter((h) => h.personaname.toLowerCase() === needle)
+  const exact = hits.filter((h) => normalizeNick(h.personaname).toLowerCase() === needle)
   return exact.length === 1 ? exact[0] : null
+}
+
+/** Strong single candidate: exact, or one clear prefix hit. */
+export function bestConfidentNickHit(hits: PlayerProfile[], nick: string): PlayerProfile | null {
+  const exact = bestExactNickHit(hits, nick)
+  if (exact) return exact
+  if (hits.length === 1) return hits[0]
+  const needle = normalizeNick(nick).toLowerCase()
+  const strong = hits.filter((h) => nickScore(h.personaname, needle) >= 80)
+  return strong.length === 1 ? strong[0] : null
 }
 
 export async function fetchPlayer(accountId: AccountId): Promise<PlayerProfile> {

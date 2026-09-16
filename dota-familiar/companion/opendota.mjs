@@ -162,5 +162,80 @@ export async function buildFamiliarIndexServer(accountId, matchLimit = 15, onPro
   }
 }
 
+export function nickQueryVariants(raw) {
+  const base = String(raw || '')
+    .replace(/\u2026/g, '...')
+    .replace(/\.{2,}$/g, '')
+    .replace(/\[[^\]]*]/g, ' ')
+    .replace(/[«»""„]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!base) return []
+  const out = []
+  const push = (s) => {
+    const t = String(s || '').trim()
+    if (t.length >= 2 && !out.some((x) => x.toLowerCase() === t.toLowerCase())) out.push(t)
+  }
+  push(base)
+  push(base.replace(/[^\p{L}\p{N}_.\- ]+/gu, ' ').replace(/\s+/g, ' '))
+  const noSpace = base.replace(/\s+/g, '')
+  if (noSpace.length >= 3) push(noSpace)
+  const first = base.split(/\s+/)[0]
+  if (first && first.length >= 3) push(first)
+  if (base.length >= 8) push(base.slice(0, Math.min(12, base.length)))
+  if (base.length >= 6) push(base.slice(0, 6))
+  return out.slice(0, 4)
+}
+
+function nickScore(personaname, needle) {
+  const n = String(personaname || '').toLowerCase()
+  const q = String(needle || '').toLowerCase()
+  if (!n || !q) return 0
+  if (n === q) return 100
+  if (n.startsWith(q)) return 80
+  if (n.includes(q)) return 60
+  const core = q.replace(/[^a-z0-9а-яё]/gi, '')
+  const nc = n.replace(/[^a-z0-9а-яё]/gi, '')
+  if (core && nc === core) return 90
+  if (core && nc.startsWith(core)) return 70
+  if (core && nc.includes(core)) return 40
+  return 10
+}
+
+/** Fast multi-variant OpenDota nick search for live lobby. */
+export async function searchNickServer(rawNick) {
+  const variants = nickQueryVariants(rawNick)
+  const needle = variants[0] || String(rawNick || '').trim()
+  if (!needle) return []
+  const byId = new Map()
+  await Promise.all(
+    variants.map(async (v) => {
+      try {
+        const data = await opendotaGet(`/api/search?q=${encodeURIComponent(v)}`, {
+          timeoutMs: 8000,
+          retries: 1,
+        })
+        for (const p of Array.isArray(data) ? data : []) {
+          const id = Number(p.account_id)
+          if (!Number.isFinite(id) || byId.has(id)) continue
+          byId.set(id, {
+            account_id: id,
+            accountId: id,
+            personaname: p.personaname || `Player ${id}`,
+            avatarfull: p.avatarfull,
+          })
+        }
+      } catch {
+        // ignore variant failure
+      }
+    }),
+  )
+  return [...byId.values()]
+    .map((p) => ({ ...p, _score: nickScore(p.personaname, needle) }))
+    .sort((a, b) => b._score - a._score)
+    .slice(0, 16)
+    .map(({ _score, ...rest }) => rest)
+}
+
 // silence unused import lint if any bundler looks here
 void http

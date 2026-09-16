@@ -21,6 +21,7 @@ import {
   opendotaGet,
   pingOpenDota,
   resolveAccountIdLocal,
+  searchNickServer,
 } from './opendota.mjs'
 
 const PORT = Number(process.env.RF_PORT || 17321)
@@ -505,14 +506,41 @@ const server = http.createServer(async (req, res) => {
       }
 
       const apiPath = url.pathname.replace(/^\/opendota/, '/api') + url.search
+      const isSearch = apiPath.startsWith('/api/search')
       try {
-        const data = await opendotaGet(apiPath, { timeoutMs: 20000, retries: 3 })
+        const data = await opendotaGet(apiPath, {
+          timeoutMs: isSearch ? 8000 : 20000,
+          retries: isSearch ? 1 : 3,
+        })
         sendJson(res, req, 200, data)
       } catch (e) {
         sendJson(res, req, 502, {
           error: 'OpenDota proxy failed',
           detail: e instanceof Error ? e.message : String(e),
           hint: 'If this keeps failing, OpenDota may be blocked — try VPN.',
+        })
+      }
+      return
+    }
+
+    // Fast nick search for live lobby (short timeout, variants)
+    if (method === 'POST' && url.pathname === '/search-nick') {
+      const body = await readBody(req)
+      const q = String(body?.q || body?.nick || body?.query || '').trim()
+      if (!q) {
+        sendJson(res, req, 400, { error: 'missing q' })
+        return
+      }
+      const started = Date.now()
+      try {
+        const hits = await searchNickServer(q)
+        sendJson(res, req, 200, { ok: true, q, hits, ms: Date.now() - started })
+      } catch (e) {
+        sendJson(res, req, 502, {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+          hits: [],
+          hint: 'OpenDota search slow/blocked — try VPN or paste OpenDota link.',
         })
       }
       return

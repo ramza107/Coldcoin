@@ -3,15 +3,17 @@ import { fetchCompanionHealth, fetchCompanionLobby, lobbySignature } from './lib
 import {
   absorbMatchIntoIndex,
   accountIdToSteam64,
+  bestConfidentNickHit,
   buildFamiliarIndex,
   fetchLatestMatchId,
   fetchMatch,
-  bestExactNickHit,
   fetchPlayer,
   fetchPlayerRecentBrief,
   matchPlayersFromDetail,
+  normalizeNick,
   rankLabel,
   resolveAccountId,
+  searchFamiliarFuzzy,
   searchPlayers,
   steam64ToAccountId,
   winrate,
@@ -204,10 +206,10 @@ function parseEnemyPaste(raw: string, myTeam: 'radiant' | 'dire'): {
 }
 
 function familiarByNick(index: FamiliarIndex, nick: string): FamiliarRecord | null {
-  const needle = nick.trim().toLowerCase()
-  if (!needle) return null
-  const hits = Object.values(index.players).filter((p) => p.personaname.toLowerCase() === needle)
-  return hits.length === 1 ? hits[0] : null
+  const hits = searchFamiliarFuzzy(index, nick)
+  if (hits.length !== 1) return null
+  const rec = index.players[String(hits[0].accountId)]
+  return rec || null
 }
 
 export default function App() {
@@ -577,6 +579,26 @@ export default function App() {
     }
   }
 
+  async function lookupNickHits(nick: string): Promise<PlayerProfile[]> {
+    const local = index ? searchFamiliarFuzzy(index, nick) : []
+    // Show local familiar hits immediately while OpenDota runs
+    if (local.length) {
+      setNickHits(local)
+      setNickSearchLabel(normalizeNick(nick) || nick)
+    }
+    let remote: PlayerProfile[] = []
+    try {
+      remote = await searchPlayers(nick, companionOnline ? companionUrl : undefined)
+    } catch {
+      remote = []
+    }
+    const byId = new Map<number, PlayerProfile>()
+    for (const p of [...local, ...remote]) {
+      if (!byId.has(p.accountId)) byId.set(p.accountId, p)
+    }
+    return [...byId.values()]
+  }
+
   async function resolveNicksToPlayers(
     nicks: string[],
     myTeam: 'radiant' | 'dire',
@@ -587,6 +609,7 @@ export default function App() {
     let leftoverLabel = ''
 
     for (const nick of nicks) {
+      setStatus(`Searching “${normalizeNick(nick) || nick}”…`)
       const known = index ? familiarByNick(index, nick) : null
       if (known) {
         players.push({
@@ -598,22 +621,12 @@ export default function App() {
         continue
       }
 
-      const hits = await searchPlayers(nick)
-      const exact = bestExactNickHit(hits, nick)
-      if (exact) {
+      const hits = await lookupNickHits(nick)
+      const confident = bestConfidentNickHit(hits, nick)
+      if (confident) {
         players.push({
-          accountId: exact.accountId,
-          personaname: exact.personaname,
-          heroId: 0,
-          team: enemyTeam,
-        })
-        continue
-      }
-
-      if (hits.length === 1) {
-        players.push({
-          accountId: hits[0].accountId,
-          personaname: hits[0].personaname,
+          accountId: confident.accountId,
+          personaname: confident.personaname,
           heroId: 0,
           team: enemyTeam,
         })
@@ -724,6 +737,8 @@ export default function App() {
     setNickHits([])
     try {
       const nick = enemyPaste.trim().split(/[\n,;]/)[0].trim()
+      const label = normalizeNick(nick) || nick
+      setStatus(`Searching “${label}”…`)
       const known = familiarByNick(index, nick)
       if (known) {
         await applyEnemyHit({
@@ -733,16 +748,20 @@ export default function App() {
         })
         return
       }
-      const hits = await searchPlayers(nick)
-      const exact = bestExactNickHit(hits, nick)
-      if (exact) {
-        await applyEnemyHit(exact)
+      const hits = await lookupNickHits(nick)
+      const confident = bestConfidentNickHit(hits, nick)
+      if (confident) {
+        await applyEnemyHit(confident)
         return
       }
-      setNickSearchLabel(nick)
+      setNickSearchLabel(label)
       setNickHits(hits)
-      if (!hits.length) throw new Error(`No OpenDota hits for “${nick}”`)
-      setStatus(`Choose the matching avatar for “${nick}”`)
+      if (!hits.length) {
+        throw new Error(
+          `No hits for “${label}”. Copy the full nick (not “…”) or paste OpenDota/Dotabuff link.`,
+        )
+      }
+      setStatus(`Choose the matching avatar for “${label}”`)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Nick search failed')
     } finally {
@@ -1007,13 +1026,13 @@ export default function App() {
             <div className="paste-box">
               <h3>Paste enemies / nick lookup</h3>
               <p className="help">
-                IDs and OpenDota links are exact. Nicks are fuzzy — we search OpenDota and show avatars so you can
-                match the face from the lobby. Better than nothing, not guaranteed.
+                Лучше полный ник (без «…») или ссылка OpenDota/Dotabuff. Поиск сначала по знакомым, потом OpenDota —
+                с аватарками. Обрезанные ники из UI Dota часто не находятся.
               </p>
               <textarea
                 value={enemyPaste}
                 onChange={(e) => setEnemyPaste(e.target.value)}
-                placeholder={'86745912\nMiracle-\nhttps://www.opendota.com/players/…'}
+                placeholder={'MESIAS\njanDerGOD\nhttps://www.opendota.com/players/…'}
                 rows={3}
                 disabled={busy}
               />
