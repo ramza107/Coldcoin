@@ -601,14 +601,14 @@ export default function App() {
 
   async function lookupNickHits(
     nick: string,
-  ): Promise<{ hits: PlayerProfile[]; providers: string[]; links: NickSearchLink[] }> {
+  ): Promise<{ hits: PlayerProfile[]; providers: string[]; links: NickSearchLink[]; error?: string }> {
     const local = index ? searchFamiliarFuzzy(index, nick) : []
     if (local.length) {
       setNickHits(local)
       setNickSearchLabel(normalizeNick(nick) || nick)
     }
     try {
-      const remote = await searchPlayers(nick, companionOnline ? companionUrl : undefined)
+      const remote = await searchPlayers(nick, companionUrl || undefined)
       if (remote.links?.length) setNickLinks(remote.links)
       if (remote.providers?.length) setNickProviders(remote.providers)
       const byId = new Map<number, PlayerProfile>()
@@ -619,10 +619,25 @@ export default function App() {
         hits: [...byId.values()],
         providers: remote.providers || [],
         links: remote.links || [],
+        error: remote.error,
       }
     } catch (e) {
-      if (local.length) return { hits: local, providers: ['familiar'], links: [] }
-      throw e
+      const label = normalizeNick(nick) || nick
+      const enc = encodeURIComponent(label)
+      const links: NickSearchLink[] = [
+        { provider: 'steam', label: 'Steam', url: `https://steamcommunity.com/search/users/?text=${enc}` },
+        { provider: 'dotabuff', label: 'Dotabuff', url: `https://www.dotabuff.com/search?q=${enc}` },
+        { provider: 'stratz', label: 'Stratz', url: `https://stratz.com/players?q=${enc}` },
+        { provider: 'opendota', label: 'OpenDota', url: `https://www.opendota.com/search?q=${enc}` },
+      ]
+      setNickLinks(links)
+      if (local.length) return { hits: local, providers: ['familiar'], links }
+      return {
+        hits: [],
+        providers: [],
+        links,
+        error: e instanceof Error ? e.message : String(e),
+      }
     }
   }
 
@@ -784,6 +799,7 @@ export default function App() {
         return
       }
       const found = await lookupNickHits(nick)
+      if (found.links.length) setNickLinks(found.links)
       const confident = bestConfidentNickHit(found.hits, nick)
       if (confident) {
         await applyEnemyHit(confident)
@@ -792,25 +808,26 @@ export default function App() {
       setNickSearchLabel(label)
       setNickHits(found.hits)
       if (!found.hits.length) {
-        throw new Error(
-          `Ник “${label}” не найден ни в одном источнике. Открой Dotabuff/Steam/Stratz ниже или после матча: Last finished → Refresh.`,
+        setError(
+          `Автопоиск не нашёл “${label}”. Нажми Steam ниже (самый надёжный), найди профиль и вставь ссылку сюда. Или после матча: Last finished → Refresh.`,
         )
+        setStatus('Ссылки для ручного поиска открыты ниже')
+        return
       }
       setStatus(
         `Выбери аватар для “${label}”${found.providers.length ? ` · ${found.providers.join('+')}` : ''}`,
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Nick search failed')
-      // still show external links for this nick
       const nick = enemyPaste.trim().split(/[\n,;]/)[0].trim()
       const label = normalizeNick(nick) || nick
       if (label) {
         const enc = encodeURIComponent(label)
         setNickSearchLabel(label)
         setNickLinks([
+          { provider: 'steam', label: 'Steam', url: `https://steamcommunity.com/search/users/?text=${enc}` },
           { provider: 'dotabuff', label: 'Dotabuff', url: `https://www.dotabuff.com/search?q=${enc}` },
           { provider: 'stratz', label: 'Stratz', url: `https://stratz.com/players?q=${enc}` },
-          { provider: 'steam', label: 'Steam', url: `https://steamcommunity.com/search/users/?text=${enc}` },
           { provider: 'opendota', label: 'OpenDota', url: `https://www.opendota.com/search?q=${enc}` },
         ])
       }
@@ -1172,7 +1189,7 @@ export default function App() {
                   )}
                   {nickLinks.length > 0 && (
                     <div className="ext-search">
-                      <h4>Искать вручную</h4>
+                      <h4>Открыть поиск вручную (Steam первый)</h4>
                       <div className="links">
                         {nickLinks.map((l) => (
                           <a key={l.provider} href={l.url} target="_blank" rel="noreferrer">
@@ -1180,6 +1197,9 @@ export default function App() {
                           </a>
                         ))}
                       </div>
+                      <p className="help" style={{ marginTop: '0.45rem', marginBottom: 0 }}>
+                        Нашёл профиль → скопируй ссылку Steam/Dotabuff/OpenDota → вставь в поле выше → Load intel.
+                      </p>
                     </div>
                   )}
                 </div>

@@ -246,7 +246,12 @@ export async function searchPlayersViaCompanion(
 export async function searchPlayers(
   q: string,
   companionUrl?: string,
-): Promise<{ hits: PlayerProfile[]; links?: Array<{ provider: string; label: string; url: string }>; providers?: string[] }> {
+): Promise<{
+  hits: PlayerProfile[]
+  links?: Array<{ provider: string; label: string; url: string }>
+  providers?: string[]
+  error?: string
+}> {
   const query = q.trim()
   if (!query) return { hits: [] }
   const cacheKey = query.toLowerCase()
@@ -263,6 +268,7 @@ export async function searchPlayers(
   let networkFailed = false
   let lastNetError = ''
 
+  // Prefer companion multi-provider search whenever we have a companion URL
   if (companionUrl) {
     try {
       const remote = await searchPlayersViaCompanion(companionUrl, query)
@@ -324,10 +330,17 @@ export async function searchPlayers(
     searchCache.set(cacheKey, { at: Date.now(), hits, links, providers })
   }
 
+  // Don't throw when we can still offer manual search links — UI shows them
   if (!hits.length && networkFailed) {
-    throw new NickSearchUnavailableError(
-      `Поиск по нику недоступен (${lastNetError || 'timeout'}). Открой Dotabuff/Steam/Stratz по ссылкам ниже или после матча: Last finished → Refresh.`,
-    )
+    return {
+      hits: [],
+      links,
+      providers,
+      error:
+        lastNetError && !/dotabuff:\s*HTTP 403/i.test(lastNetError)
+          ? lastNetError
+          : 'Автопоиск не нашёл игрока — открой Steam/Dotabuff/Stratz по ссылкам',
+    }
   }
 
   return { hits, links, providers }

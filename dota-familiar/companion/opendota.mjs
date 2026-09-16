@@ -465,22 +465,23 @@ async function enrichFromOpenDota(hit) {
 function externalSearchLinks(nick) {
   const q = encodeURIComponent(nick)
   return [
+    { provider: 'steam', label: 'Steam', url: `https://steamcommunity.com/search/users/?text=${q}` },
     { provider: 'dotabuff', label: 'Dotabuff', url: `https://www.dotabuff.com/search?q=${q}` },
     { provider: 'stratz', label: 'Stratz', url: `https://stratz.com/players?q=${q}` },
-    { provider: 'steam', label: 'Steam', url: `https://steamcommunity.com/search/users/?text=${q}` },
     { provider: 'opendota', label: 'OpenDota', url: `https://www.opendota.com/search?q=${q}` },
   ]
 }
 
-/** Multi-provider nick search: OpenDota + Steam (+ Dotabuff/Stratz when available). */
+/** Multi-provider nick search: Steam first (reliable), then OpenDota, Dotabuff/Stratz soft. */
 export async function searchNickServer(rawNick) {
   const variants = nickQueryVariants(rawNick)
   const needle = variants[0] || String(rawNick || '').trim()
-  if (!needle) return { hits: [], degraded: false, providers: [], links: [] }
+  if (!needle) return { hits: [], degraded: false, providers: [], links: externalSearchLinks('') }
 
   const byId = new Map()
   const providers = []
-  const errors = []
+  const hardErrors = []
+  const softNotes = []
   let odOk = false
 
   const addHit = (p, source) => {
@@ -507,11 +508,30 @@ export async function searchNickServer(rawNick) {
     })
   }
 
+  const isSoftBlock = (msg) =>
+    /403|429|cloudflare|just a moment|STRATZ_TOKEN not set|cf-/i.test(String(msg || ''))
+
+  // 1) Steam first — main fallback when OpenDota /search is dead
+  try {
+    const steamHits = await searchSteamCommunity(needle)
+    if (steamHits.length) {
+      providers.push('steam')
+      for (const p of steamHits) addHit(p, 'steam')
+    } else {
+      softNotes.push('steam: no results')
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    if (isSoftBlock(msg)) softNotes.push(`steam: ${msg}`)
+    else hardErrors.push(`steam: ${msg}`)
+  }
+
+  // 2) OpenDota + Dotabuff + Stratz in parallel
   await Promise.all([
     (async () => {
       try {
         const data = await opendotaGet(`/api/search?q=${encodeURIComponent(needle)}`, {
-          timeoutMs: 8000,
+          timeoutMs: 7000,
           retries: 1,
         })
         odOk = true
@@ -528,42 +548,36 @@ export async function searchNickServer(rawNick) {
           )
         }
       } catch (e) {
-        errors.push(`opendota: ${e instanceof Error ? e.message : String(e)}`)
-      }
-    })(),
-    (async () => {
-      try {
-        const hits = await searchSteamCommunity(needle)
-        if (hits.length) providers.push('steam')
-        for (const p of hits) addHit(p, 'steam')
-      } catch (e) {
-        errors.push(`steam: ${e instanceof Error ? e.message : String(e)}`)
+        hardErrors.push(`opendota: ${e instanceof Error ? e.message : String(e)}`)
       }
     })(),
     (async () => {
       try {
         const hits = await searchDotabuff(needle)
-        if (hits.length) providers.push('dotabuff')
-        for (const p of hits) addHit(p, 'dotabuff')
+        if (hits.length) {
+          providers.push('dotabuff')
+          for (const p of hits) addHit(p, 'dotabuff')
+        }
       } catch (e) {
-        errors.push(`dotabuff: ${e instanceof Error ? e.message : String(e)}`)
+        // Dotabuff is almost always Cloudflare — never treat as primary failure
+        softNotes.push(`dotabuff: ${e instanceof Error ? e.message : String(e)}`)
       }
     })(),
     (async () => {
       try {
         const hits = await searchStratz(needle)
-        if (hits.length) providers.push('stratz')
-        for (const p of hits) addHit(p, 'stratz')
+        if (hits.length) {
+          providers.push('stratz')
+          for (const p of hits) addHit(p, 'stratz')
+        }
       } catch (e) {
-        // token missing is normal — don't treat as hard failure noise
         const msg = e instanceof Error ? e.message : String(e)
-        if (!/STRATZ_TOKEN not set/i.test(msg)) errors.push(`stratz: ${msg}`)
+        if (!/STRATZ_TOKEN not set/i.test(msg)) softNotes.push(`stratz: ${msg}`)
       }
     })(),
   ])
 
   let hits = [...byId.values()]
-  // Enrich Steam-only rows via OpenDota player endpoint (often works when /search is dead)
   if (hits.length && !odOk) {
     hits = await Promise.all(hits.slice(0, 8).map((h) => enrichFromOpenDota(h)))
   }
@@ -574,18 +588,17 @@ export async function searchNickServer(rawNick) {
     .slice(0, 16)
     .map(({ _score, ...rest }) => rest)
 
-  const degraded = hits.length === 0 && !odOk
+  const degraded = hits.length === 0
+  const primary = hardErrors.length ? hardErrors.join(' · ') : softNotes.filter((n) => !/dotabuff/i.test(n)).join(' · ')
   return {
     hits,
     degraded,
     providers,
-    errors,
+    errors: [...hardErrors, ...softNotes],
     links: externalSearchLinks(needle),
     error: degraded
-      ? errors[0] || 'All nick search providers failed'
-      : hits.length === 0
-        ? 'No players matched that nick'
-        : undefined,
+      ? primary || softNotes[0] || 'Ник не найден ни в Steam, ни в OpenDota'
+      : undefined,
   }
 }
 
