@@ -152,7 +152,7 @@ export function searchFamiliarFuzzy(index: FamiliarIndex, nick: string): PlayerP
 async function searchOpenDotaOnce(q: string): Promise<PlayerProfile[]> {
   const data = await api<Array<{ account_id: number; personaname: string; avatarfull?: string }>>(
     `/search?q=${encodeURIComponent(q)}`,
-    9000,
+    12000,
   )
   return (Array.isArray(data) ? data : []).slice(0, 20).map((p) => ({
     accountId: p.account_id,
@@ -161,14 +161,21 @@ async function searchOpenDotaOnce(q: string): Promise<PlayerProfile[]> {
   }))
 }
 
+export class NickSearchUnavailableError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NickSearchUnavailableError'
+  }
+}
+
 /** Companion-backed nick search: faster timeouts, variants, no triple-retry hang. */
 export async function searchPlayersViaCompanion(
   companionRoot: string,
   nick: string,
-): Promise<PlayerProfile[]> {
+): Promise<{ hits: PlayerProfile[]; degraded?: boolean; error?: string }> {
   const root = companionRoot.replace(/\/$/, '')
   const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 12000)
+  const timer = setTimeout(() => ctrl.abort(), 14000)
   try {
     const res = await fetch(`${root}/search-nick`, {
       method: 'POST',
@@ -177,15 +184,26 @@ export async function searchPlayersViaCompanion(
       signal: ctrl.signal,
       cache: 'no-store',
     })
-    if (!res.ok) throw new Error(`search-nick ${res.status}`)
-    const data = (await res.json()) as { hits?: Array<{ account_id?: number; accountId?: number; personaname?: string; avatarfull?: string }> }
-    return (data.hits || [])
-      .map((p) => ({
-        accountId: Number(p.accountId ?? p.account_id),
-        personaname: p.personaname || `Player ${p.accountId ?? p.account_id}`,
-        avatarfull: p.avatarfull,
-      }))
-      .filter((p) => Number.isFinite(p.accountId))
+    const data = (await res.json()) as {
+      hits?: Array<{ account_id?: number; accountId?: number; personaname?: string; avatarfull?: string }>
+      ok?: boolean
+      error?: string
+      degraded?: boolean
+    }
+    if (!res.ok) {
+      return { hits: [], degraded: true, error: data.error || `search-nick ${res.status}` }
+    }
+    return {
+      hits: (data.hits || [])
+        .map((p) => ({
+          accountId: Number(p.accountId ?? p.account_id),
+          personaname: p.personaname || `Player ${p.accountId ?? p.account_id}`,
+          avatarfull: p.avatarfull,
+        }))
+        .filter((p) => Number.isFinite(p.accountId)),
+      degraded: Boolean(data.degraded),
+      error: data.error,
+    }
   } finally {
     clearTimeout(timer)
   }
@@ -201,25 +219,39 @@ export async function searchPlayers(q: string, companionUrl?: string): Promise<P
   const variants = nickQueryVariants(query)
   const needle = normalizeNick(query) || query
   let hits: PlayerProfile[] = []
+  let networkFailed = false
+  let lastNetError = ''
 
   if (companionUrl) {
     try {
-      hits = await searchPlayersViaCompanion(companionUrl, query)
-    } catch {
+      const remote = await searchPlayersViaCompanion(companionUrl, query)
+      hits = remote.hits
+      if (remote.degraded || remote.error) {
+        networkFailed = hits.length === 0
+        lastNetError = remote.error || 'OpenDota search degraded'
+      }
+    } catch (e) {
+      networkFailed = true
+      lastNetError = e instanceof Error ? e.message : String(e)
       hits = []
     }
   }
 
   if (!hits.length) {
+    let anyOk = false
     const batches = await Promise.all(
       variants.map(async (v) => {
         try {
-          return await searchOpenDotaOnce(v)
-        } catch {
+          const list = await searchOpenDotaOnce(v)
+          anyOk = true
+          return list
+        } catch (e) {
+          lastNetError = e instanceof Error ? e.message : String(e)
           return [] as PlayerProfile[]
         }
       }),
     )
+    if (!anyOk) networkFailed = true
     const byId = new Map<number, PlayerProfile>()
     for (const list of batches) {
       for (const p of list) {
@@ -235,7 +267,17 @@ export async function searchPlayers(q: string, companionUrl?: string): Promise<P
     .map((x) => x.p)
     .slice(0, 16)
 
-  searchCache.set(cacheKey, { at: Date.now(), hits })
+  // Only cache real answers — don't poison cache with timeout empties
+  if (hits.length || !networkFailed) {
+    searchCache.set(cacheKey, { at: Date.now(), hits })
+  }
+
+  if (!hits.length && networkFailed) {
+    throw new NickSearchUnavailableError(
+      `OpenDota поиск по нику сейчас не работает (${lastNetError || 'timeout'}). После матча: Last finished → Refresh. Или вставь ссылку OpenDota/Dotabuff.`,
+    )
+  }
+
   return hits
 }
 

@@ -533,11 +533,21 @@ const server = http.createServer(async (req, res) => {
       }
       const started = Date.now()
       try {
-        const hits = await searchNickServer(q)
-        sendJson(res, req, 200, { ok: true, q, hits, ms: Date.now() - started })
+        const result = await searchNickServer(q)
+        const hits = Array.isArray(result) ? result : result.hits || []
+        const degraded = Array.isArray(result) ? false : Boolean(result.degraded)
+        sendJson(res, req, 200, {
+          ok: !degraded || hits.length > 0,
+          q,
+          hits,
+          degraded,
+          error: Array.isArray(result) ? undefined : result.error,
+          ms: Date.now() - started,
+        })
       } catch (e) {
         sendJson(res, req, 502, {
           ok: false,
+          degraded: true,
           error: e instanceof Error ? e.message : String(e),
           hits: [],
           hint: 'OpenDota search slow/blocked — try VPN or paste OpenDota link.',

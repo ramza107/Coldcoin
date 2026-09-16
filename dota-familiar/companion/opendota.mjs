@@ -240,15 +240,18 @@ function nickScore(personaname, needle) {
 export async function searchNickServer(rawNick) {
   const variants = nickQueryVariants(rawNick)
   const needle = variants[0] || String(rawNick || '').trim()
-  if (!needle) return []
+  if (!needle) return { hits: [], degraded: false }
   const byId = new Map()
+  let okCount = 0
+  let lastError = ''
   await Promise.all(
     variants.map(async (v) => {
       try {
         const data = await opendotaGet(`/api/search?q=${encodeURIComponent(v)}`, {
-          timeoutMs: 8000,
+          timeoutMs: 10000,
           retries: 1,
         })
+        okCount += 1
         for (const p of Array.isArray(data) ? data : []) {
           const id = Number(p.account_id)
           if (!Number.isFinite(id) || byId.has(id)) continue
@@ -259,16 +262,22 @@ export async function searchNickServer(rawNick) {
             avatarfull: p.avatarfull,
           })
         }
-      } catch {
-        // ignore variant failure
+      } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e)
       }
     }),
   )
-  return [...byId.values()]
+  const hits = [...byId.values()]
     .map((p) => ({ ...p, _score: nickScore(p.personaname, needle) }))
     .sort((a, b) => b._score - a._score)
     .slice(0, 16)
     .map(({ _score, ...rest }) => rest)
+
+  return {
+    hits,
+    degraded: okCount === 0,
+    error: okCount === 0 ? lastError || 'OpenDota /search unavailable' : undefined,
+  }
 }
 
 // silence unused import lint if any bundler looks here

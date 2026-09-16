@@ -606,8 +606,9 @@ export default function App() {
     let remote: PlayerProfile[] = []
     try {
       remote = await searchPlayers(nick, companionOnline ? companionUrl : undefined)
-    } catch {
-      remote = []
+    } catch (e) {
+      if (local.length) return local
+      throw e
     }
     const byId = new Map<number, PlayerProfile>()
     for (const p of [...local, ...remote]) {
@@ -703,7 +704,9 @@ export default function App() {
             await pushOrApplyPasteLobby(enemies, myTeam)
           }
           if (!resolved.leftoverHits.length) {
-            throw new Error(`No OpenDota hits for nick “${resolved.leftoverLabel}”. Try another spelling.`)
+            throw new Error(
+              `Ник “${normalizeNick(resolved.leftoverLabel) || resolved.leftoverLabel}” не найден в OpenDota. После игры: Last finished → Refresh (там будут ID). Или вставь ссылку профиля.`,
+            )
           }
           setStatus(
             `Pick the right avatar for “${resolved.leftoverLabel}” — nicks are not unique`,
@@ -775,7 +778,7 @@ export default function App() {
       setNickHits(hits)
       if (!hits.length) {
         throw new Error(
-          `No hits for “${label}”. Copy the full nick (not “…”) or paste OpenDota/Dotabuff link.`,
+          `Ник “${label}” не найден. Если OpenDota search лежит — после матча жми Last finished → Refresh. Либо вставь ссылку OpenDota/Dotabuff.`,
         )
       }
       setStatus(`Choose the matching avatar for “${label}”`)
