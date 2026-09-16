@@ -23,6 +23,7 @@ import {
   resolveAccountIdLocal,
   searchNickServer,
 } from './opendota.mjs'
+import { scanPickNicks } from './ocr-nicks.mjs'
 
 const PORT = Number(process.env.RF_PORT || 17321)
 const HOST = process.env.RF_HOST || '127.0.0.1'
@@ -518,6 +519,24 @@ const server = http.createServer(async (req, res) => {
           error: 'OpenDota proxy failed',
           detail: e instanceof Error ? e.message : String(e),
           hint: 'If this keeps failing, OpenDota may be blocked — try VPN.',
+        })
+      }
+      return
+    }
+
+    // One-shot OCR of Dota pick bar (screen pixels — not memory read)
+    if (method === 'POST' && url.pathname === '/ocr-nicks') {
+      const body = await readBody(req)
+      const delayMs = Number(body?.delayMs ?? 2000)
+      const heightRatio = Number(body?.heightRatio ?? 0.16)
+      try {
+        const result = await scanPickNicks({ delayMs, heightRatio })
+        sendJson(res, req, 200, result)
+      } catch (e) {
+        sendJson(res, req, 500, {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+          hint: 'Разверни Dota на основной монитор, стадия пика. OCR = снимок экрана, не чит памяти.',
         })
       }
       return

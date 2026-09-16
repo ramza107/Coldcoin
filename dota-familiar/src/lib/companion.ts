@@ -24,6 +24,44 @@ export async function fetchCompanionHealth(baseUrl = DEFAULT_COMPANION_URL): Pro
   }
 }
 
+export async function fetchOcrNicks(
+  baseUrl = DEFAULT_COMPANION_URL,
+  opts?: { delayMs?: number },
+): Promise<{
+  ok: boolean
+  nicks?: string[]
+  engine?: string
+  rawText?: string
+  hint?: string
+  error?: string
+}> {
+  const root = baseUrl.replace(/\/$/, '')
+  const res = await fetch(`${root}/ocr-nicks`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ delayMs: opts?.delayMs ?? 2000, heightRatio: 0.16 }),
+  })
+  const data = (await res.json()) as {
+    ok?: boolean
+    nicks?: string[]
+    engine?: string
+    rawText?: string
+    hint?: string
+    error?: string
+  }
+  if (!res.ok) {
+    return { ok: false, error: data.error || `ocr-nicks ${res.status}`, hint: data.hint }
+  }
+  return {
+    ok: Boolean(data.ok !== false),
+    nicks: data.nicks || [],
+    engine: data.engine,
+    rawText: data.rawText,
+    hint: data.hint,
+    error: data.error,
+  }
+}
+
 export function lobbySignature(lobby: LiveLobby | null): string {
   if (!lobby) return ''
   return [

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchCompanionHealth, fetchCompanionLobby, lobbySignature } from './lib/companion'
+import { fetchCompanionHealth, fetchCompanionLobby, fetchOcrNicks, lobbySignature } from './lib/companion'
 import {
   absorbMatchIntoIndex,
   accountIdToSteam64,
@@ -778,6 +778,49 @@ export default function App() {
     }
   }
 
+  async function handleOcrScan() {
+    if (!index) return
+    setError('')
+    setBusy(true)
+    setNickHits([])
+    setNickLinks([])
+    try {
+      setStatus('OCR: переключись на Dota (пик) — снимок через 2 сек…')
+      // Give user time to focus Dota; avoid capturing ReplayFace on top
+      try {
+        document.body.style.opacity = '0.15'
+      } catch {
+        // ignore
+      }
+      const result = await fetchOcrNicks(companionUrl, { delayMs: 2200 })
+      try {
+        document.body.style.opacity = '1'
+      } catch {
+        // ignore
+      }
+      if (!result.ok) throw new Error(result.error || 'OCR failed')
+      const nicks = (result.nicks || []).filter(Boolean)
+      if (!nicks.length) {
+        setError(result.hint || 'OCR ничего не нашёл. Dota на весь экран, основной монитор, стадия пика.')
+        setStatus(result.engine ? `OCR engine: ${result.engine}` : '')
+        return
+      }
+      setEnemyPaste(nicks.join('\n'))
+      setStatus(
+        `OCR (${result.engine}): ${nicks.length} ник(ов). Проверь список и жми Load intel / Search.`,
+      )
+    } catch (e) {
+      try {
+        document.body.style.opacity = '1'
+      } catch {
+        // ignore
+      }
+      setError(e instanceof Error ? e.message : 'OCR failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleSearchNickOnly() {
     if (!index || !enemyPaste.trim()) return
     setError('')
@@ -1093,8 +1136,8 @@ export default function App() {
             <div className="paste-box">
               <h3>Paste enemies / nick lookup</h3>
               <p className="help">
-                Поиск: знакомые → OpenDota → Steam → Dotabuff/Stratz (если доступны). Если API лежит — открой
-                ссылки ниже и вставь URL профиля. Полный ник без «…» лучше.
+                OCR (кнопка ниже): снимок верха экрана на пике → ники. Криво, но легально. Потом поиск: знакомые →
+                Steam → OpenDota. Лучше полный ник / ссылка профиля.
               </p>
               <textarea
                 value={enemyPaste}
@@ -1104,6 +1147,15 @@ export default function App() {
                 disabled={busy}
               />
               <div className="row">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={busy || !companionOnline}
+                  onClick={handleOcrScan}
+                  title="Снимок экрана + Windows OCR. Не чтение памяти Dota."
+                >
+                  {busy ? 'Working…' : 'OCR ники с экрана'}
+                </button>
                 <button
                   type="button"
                   className="primary"

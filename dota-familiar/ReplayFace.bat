@@ -13,6 +13,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
+if not exist "node_modules\tesseract.js" (
+  echo Installing OCR deps once...
+  call npm install --no-audit --no-fund
+)
+
 if not exist "dist\index.html" (
   echo Building UI first time...
   call npm install
@@ -29,8 +34,8 @@ echo  ReplayFace — one app, no Overwolf
 echo  ---------------------------------
 echo  1^) Window/server starts
 echo  2^) Connect your profile
-echo  3^) After games: Last finished / auto-watch
-echo  4^) In lobby: paste enemy IDs for live intel
+echo  3^) Live: OCR nicks / paste / search
+echo  4^) After games: Last finished
 echo.
 
 REM Prefer desktop window if electron can run; else companion+browser
