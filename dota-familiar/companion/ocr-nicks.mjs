@@ -1,6 +1,6 @@
 /**
  * One-shot screen OCR for Dota pick-phase nicks (legal: screen pixels, not memory).
- * Tuned for ultrawide + small white names on dark top bar.
+ * Captures 10 player slots separately (skips center timer) and filters medal junk.
  */
 import fs from 'node:fs'
 import os from 'node:os'
@@ -12,10 +12,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const TMP_DIR = path.join(os.tmpdir(), 'replayface-ocr')
 
 const JUNK =
-  /^(radiant|dire|тьма|свет|all\s*pick|captains|strategy|ban|pick|vs|enemy|ally|dota|valve|unranked|rank|medal|hero|select|стадия|выбора|планирования|выберите|ещё|одного|героя|лёгкая|легкая|сложная|поддержка|полный|центр|\d+:\d+|^\d+$)$/i
+  /^(radiant|dire|тьма|свет|all|pick|all\s*pick|captains|strategy|ban|vs|enemy|ally|dota|valve|unranked|rank|medal|hero|select|стадия|выбора|планирования|выберите|ещё|еще|одного|двух|трёх|трех|героев|героя|лёгкая|легкая|сложная|поддержка|полный|центр|\d+:\d+)$/i
 
 const MEDAL =
-  /^(herald|guardian|crusader|archon|legend|ancient|divine|immortal|recruiter|титан|древний|божественный|властелин|легенда|рыцарь|страж|рекрут)(\s+(i{1,3}|iv|v|\d))?$/i
+  /^(herald|guardian|crusader|archon|legend|ancient|divine|immortal|recruiter|божество|властелин|титан|древний|божественный|легенда|рыцарь|страж|рекрут|умелец|центурион)(\s*(i{1,3}|iv|v|\d+))?$/i
 
 const ROLE =
   /^(mid|carry|off|support|hard|soft|pos\s*[1-5]|лёгкая|легкая|сложная|поддержка|полный\s*саппорт|центр)$/i
@@ -58,7 +58,6 @@ function ensureTmp() {
   fs.mkdirSync(TMP_DIR, { recursive: true })
 }
 
-/** Minimize ReplayFace so it does not cover the draft name bar. */
 async function minimizeReplayFaceWindows() {
   const ps = `
 Add-Type @"
@@ -66,13 +65,12 @@ using System;
 using System.Runtime.InteropServices;
 public class RfWin {
   [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
 }
 "@
 Get-Process | Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -match 'ReplayFace' } | ForEach-Object {
   [RfWin]::ShowWindowAsync($_.MainWindowHandle, 6) | Out-Null
 }
-Start-Sleep -Milliseconds 400
+Start-Sleep -Milliseconds 350
 Write-Output 'minimized'
 `
   const script = path.join(TMP_DIR, 'minimize.ps1')
@@ -85,34 +83,31 @@ Write-Output 'minimized'
 }
 
 /**
- * Capture top name bar. On ultrawide, crop to centered ~16:9 game area
- * and upscale + boost contrast for small white text.
+ * Capture top pick bar as 10 player-slot crops (5 left + 5 right, skip center timer).
+ * Also saves a name-band strip for debug.
  */
-export async function capturePickStrip({ heightPx = 110, scale = 3 } = {}) {
+export async function capturePickSlots({ heightPx = 130, scale = 4 } = {}) {
   if (process.platform !== 'win32') {
     throw new Error('OCR screen capture сейчас только для Windows')
   }
   ensureTmp()
   const stamp = Date.now()
-  const outPng = path.join(TMP_DIR, `pick-${stamp}.png`)
-  const leftPng = path.join(TMP_DIR, `pick-L-${stamp}.png`)
-  const rightPng = path.join(TMP_DIR, `pick-R-${stamp}.png`)
-  const safeOut = outPng.replace(/'/g, "''")
-  const safeL = leftPng.replace(/'/g, "''")
-  const safeR = rightPng.replace(/'/g, "''")
+  const outDir = path.join(TMP_DIR, `slots-${stamp}`)
+  fs.mkdirSync(outDir, { recursive: true })
+  const bandPng = path.join(outDir, 'band.png')
+  const safeDir = outDir.replace(/'/g, "''")
+  const safeBand = bandPng.replace(/'/g, "''")
 
   const ps = `
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Prefer the largest screen (often ultrawide with Dota)
 $screen = [System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.Width * $_.Bounds.Height } -Descending | Select-Object -First 1
 $b = $screen.Bounds
 $sw = [int]$b.Width
 $sh = [int]$b.Height
 
-# Dota HUD on ultrawide sits in a centered 16:9-ish band
 $targetAspect = 16.0 / 9.0
 $gameW = $sw
 $gameX = 0
@@ -121,52 +116,82 @@ if (($sw * 1.0 / [Math]::Max(1,$sh)) -gt 1.9) {
   $gameX = [int](($sw - $gameW) / 2)
 }
 
-$h = [Math]::Min([Math]::Max(70, ${Number(heightPx)}), [int]($sh * 0.18))
-$src = New-Object System.Drawing.Bitmap $gameW, $h
+$h = [Math]::Min([Math]::Max(90, ${Number(heightPx)}), [int]($sh * 0.2))
+# Name text sits in lower part of the top player panel — skip medal badge tops a bit
+$y0 = [Math]::Max(0, [int]($h * 0.08))
+$h2 = $h - $y0
+
+$src = New-Object System.Drawing.Bitmap $gameW, $h2
 $g = [System.Drawing.Graphics]::FromImage($src)
-$g.CopyFromScreen(($b.X + $gameX), $b.Y, 0, 0, (New-Object System.Drawing.Size $gameW, $h))
+$g.CopyFromScreen(($b.X + $gameX), ($b.Y + $y0), 0, 0, (New-Object System.Drawing.Size $gameW, $h2))
 $g.Dispose()
 
-function Enhance([System.Drawing.Bitmap]$srcBmp, [int]$scale) {
+function Upscale([System.Drawing.Bitmap]$srcBmp, [int]$scale) {
   $dw = [Math]::Max(1, $srcBmp.Width * $scale)
   $dh = [Math]::Max(1, $srcBmp.Height * $scale)
   $dst = New-Object System.Drawing.Bitmap $dw, $dh
   $gg = [System.Drawing.Graphics]::FromImage($dst)
   $gg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
   $gg.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
-  $gg.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighSpeed
   $gg.DrawImage($srcBmp, 0, 0, $dw, $dh)
   $gg.Dispose()
   return $dst
 }
 
 $scale = ${Number(scale)}
-$full = Enhance $src $scale
-$full.Save('${safeOut}', [System.Drawing.Imaging.ImageFormat]::Png)
+$band = Upscale $src $scale
+$band.Save('${safeBand}', [System.Drawing.Imaging.ImageFormat]::Png)
+$band.Dispose()
 
-$half = [int]($src.Width / 2)
-$rectL = New-Object System.Drawing.Rectangle 0, 0, $half, $src.Height
-$rectR = New-Object System.Drawing.Rectangle $half, 0, ($src.Width - $half), $src.Height
-$leftSrc = $src.Clone($rectL, $src.PixelFormat)
-$rightSrc = $src.Clone($rectR, $src.PixelFormat)
-$left = Enhance $leftSrc $scale
-$right = Enhance $rightSrc $scale
-$left.Save('${safeL}', [System.Drawing.Imaging.ImageFormat]::Png)
-$right.Save('${safeR}', [System.Drawing.Imaging.ImageFormat]::Png)
+# Skip center timer (~18% width). Split sides into 5 slots each.
+$midSkip = [int]($src.Width * 0.18)
+$sideW = [int](($src.Width - $midSkip) / 2)
+$leftX = 0
+$rightX = $sideW + $midSkip
+$slotW = [Math]::Max(20, [int]($sideW / 5))
 
-$left.Dispose(); $right.Dispose(); $leftSrc.Dispose(); $rightSrc.Dispose()
-$full.Dispose(); $src.Dispose()
-Write-Output "ok gameW=$gameW h=$h scale=$scale screen=$sw x$sh"
+$paths = @()
+for ($i = 0; $i -lt 5; $i++) {
+  $x = $leftX + ($i * $slotW)
+  $w = if ($i -eq 4) { $sideW - ($i * $slotW) } else { $slotW }
+  $rect = New-Object System.Drawing.Rectangle $x, 0, $w, $src.Height
+  $crop = $src.Clone($rect, $src.PixelFormat)
+  $up = Upscale $crop $scale
+  $p = Join-Path '${safeDir}' ("slot-R$i.png")
+  $up.Save($p, [System.Drawing.Imaging.ImageFormat]::Png)
+  $paths += $p
+  $up.Dispose(); $crop.Dispose()
+}
+for ($i = 0; $i -lt 5; $i++) {
+  $x = $rightX + ($i * $slotW)
+  $w = if ($i -eq 4) { ($src.Width - $rightX) - ($i * $slotW) } else { $slotW }
+  if ($w -lt 10) { continue }
+  $rect = New-Object System.Drawing.Rectangle $x, 0, $w, $src.Height
+  $crop = $src.Clone($rect, $src.PixelFormat)
+  $up = Upscale $crop $scale
+  $p = Join-Path '${safeDir}' ("slot-D$i.png")
+  $up.Save($p, [System.Drawing.Imaging.ImageFormat]::Png)
+  $paths += $p
+  $up.Dispose(); $crop.Dispose()
+}
+
+$src.Dispose()
+Write-Output ("ok gameW=$gameW h=$h2 scale=$scale slots=" + $paths.Count + " screen=$sw" + "x$sh")
 `
-  const script = path.join(TMP_DIR, 'capture.ps1')
+  const script = path.join(TMP_DIR, 'capture-slots.ps1')
   fs.writeFileSync(script, ps, 'utf8')
   const { stdout } = await run(
     'powershell.exe',
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
     90000,
   )
-  if (!fs.existsSync(outPng)) throw new Error('Screenshot failed')
-  return { full: outPng, left: leftPng, right: rightPng, meta: String(stdout || '').trim() }
+  const slots = fs
+    .readdirSync(outDir)
+    .filter((f) => f.startsWith('slot-') && f.endsWith('.png'))
+    .sort()
+    .map((f) => path.join(outDir, f))
+  if (!slots.length) throw new Error('Slot capture failed')
+  return { band: bandPng, slots, meta: String(stdout || '').trim(), outDir }
 }
 
 async function ocrWindowsMedia(pngPath) {
@@ -202,12 +227,12 @@ if (-not $engine) { throw 'Windows OCR engine unavailable' }
 $result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
 Write-Output $result.Text
 `
-  const script = path.join(TMP_DIR, `ocr-win-${Date.now()}.ps1`)
+  const script = path.join(TMP_DIR, `ocr-win-${Date.now()}-${Math.random().toString(16).slice(2)}.ps1`)
   fs.writeFileSync(script, ps, 'utf8')
   const { stdout } = await run(
     'powershell.exe',
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
-    90000,
+    60000,
   )
   return String(stdout || '').trim()
 }
@@ -217,11 +242,11 @@ async function ocrTesseractJs(pngPath) {
   try {
     Tesseract = (await import('tesseract.js')).default
   } catch {
-    throw new Error('tesseract.js не установлен — запусти ReplayFace.bat ещё раз (npm install)')
+    throw new Error('tesseract.js не установлен')
   }
   const result = await Tesseract.recognize(pngPath, 'eng', {
     logger: () => {},
-    tessedit_pageseg_mode: '6',
+    tessedit_pageseg_mode: '7', // treat as single text line — better for slot nicks
   })
   return String(result?.data?.text || '').trim()
 }
@@ -245,6 +270,26 @@ async function ocrOne(pngPath) {
   return { engine: 'none', text: '', errors }
 }
 
+function isMedalJunk(t) {
+  if (MEDAL.test(t) || ROLE.test(t) || JUNK.test(t)) return true
+  if (/^[\d\sIVXivx.]+$/.test(t)) return true // 102, IV, 86 V
+  if (/^[IVX]+$/i.test(t)) return true
+  if (/^\d{1,4}$/.test(t)) return true
+  return false
+}
+
+function scoreNickCandidate(t) {
+  let s = 0
+  if (/[a-z]/.test(t)) s += 3 // real nicks often have lowercase
+  if (/[A-Z]/.test(t) && /[a-z]/.test(t)) s += 2
+  if (/[\p{L}]/u.test(t) && t.length >= 3) s += 2
+  if (/[_\-.]/.test(t)) s += 1
+  if (/\s/.test(t) && t.split(/\s+/).length <= 3) s += 1 // sugar coma
+  if (isMedalJunk(t)) s -= 20
+  if (t.length < 2) s -= 10
+  return s
+}
+
 export function parseNicksFromOcrText(text) {
   const raw = String(text || '')
     .replace(/\u2026/g, '...')
@@ -261,11 +306,10 @@ export function parseNicksFromOcrText(text) {
       .replace(/\s+/g, ' ')
       .trim()
     if (t.length < 2 || t.length > 32) return
-    if (JUNK.test(t) || MEDAL.test(t) || ROLE.test(t)) return
-    if (/^\d+(\.\d+)?$/.test(t)) return
-    if (/^(I|II|III|IV|V)$/i.test(t)) return
-    // drop single-letter noise
-    if (t.length < 3 && !/[0-9]/.test(t)) return
+    if (isMedalJunk(t)) return
+    if (!/[\p{L}]/u.test(t)) return
+    // need at least one "real" letter that isn't only roman-numeral-ish single I/V
+    if (/^[iv]+$/i.test(t)) return
     const key = t.toLowerCase()
     if (seen.has(key)) return
     seen.add(key)
@@ -275,63 +319,101 @@ export function parseNicksFromOcrText(text) {
   for (const line of raw.split(/\r?\n/)) {
     const cleaned = line.replace(/\s{2,}/g, ' ').trim()
     if (!cleaned) continue
-    if (cleaned.length <= 28 && /[\p{L}]/u.test(cleaned)) push(cleaned)
-    // also split on spaces for "Name Role" OCR lines
-    for (const part of cleaned.split(/\s{2,}|\s[·•]\s/)) push(part)
-    const words = cleaned.split(/\s+/)
-    if (words.length >= 2 && words.length <= 4) {
-      // try first word as nick (Rayees[tag] already stripped)
+    push(cleaned)
+    for (const part of cleaned.split(/\s{2,}/)) push(part)
+    const words = cleaned.split(/\s+/).filter(Boolean)
+    if (words.length === 1) push(words[0])
+    if (words.length === 2) {
       push(words[0])
-      // two-word nick: sugar coma
-      if (words.length >= 2) push(`${words[0]} ${words[1]}`)
+      push(`${words[0]} ${words[1]}`)
+    }
+    if (words.length >= 3) {
+      // take first non-junk word as nick
+      for (const w of words) {
+        if (!isMedalJunk(w) && /[\p{L}]/u.test(w) && w.length >= 2) {
+          push(w)
+          break
+        }
+      }
     }
   }
 
-  return tokens.filter((t) => /[\p{L}]/u.test(t)).slice(0, 14)
+  return tokens
+    .map((t) => ({ t, s: scoreNickCandidate(t) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s)
+    .map((x) => x.t)
+}
+
+/** Best single nick from one slot's OCR text. */
+export function bestNickFromSlotText(text) {
+  const cands = parseNicksFromOcrText(text)
+  return cands[0] || null
 }
 
 export async function scanPickNicks(opts = {}) {
-  const delayMs = Math.min(5000, Math.max(0, Number(opts.delayMs) || 1500))
+  const delayMs = Math.min(5000, Math.max(0, Number(opts.delayMs) || 1200))
   ensureTmp()
   await minimizeReplayFaceWindows()
   if (delayMs) await new Promise((r) => setTimeout(r, delayMs))
 
-  const shots = await capturePickStrip({
-    heightPx: Number(opts.heightPx) || 120,
-    scale: Number(opts.scale) || 3,
+  const shots = await capturePickSlots({
+    heightPx: Number(opts.heightPx) || 130,
+    scale: Number(opts.scale) || 4,
   })
 
-  const parts = []
+  const nicks = []
+  const seen = new Set()
+  const rawParts = []
   const engines = []
   const errors = []
-  for (const [label, file] of [
-    ['full', shots.full],
-    ['left', shots.left],
-    ['right', shots.right],
-  ]) {
-    if (!file || !fs.existsSync(file)) continue
+  const perSlot = []
+
+  for (const file of shots.slots) {
     const one = await ocrOne(file)
-    engines.push(`${label}:${one.engine}`)
-    if (one.text) parts.push(one.text)
-    if (one.errors?.length) errors.push(...one.errors.map((e) => `${label}/${e}`))
+    engines.push(one.engine)
+    if (one.text) rawParts.push(one.text)
+    if (one.errors?.length) errors.push(...one.errors)
+    const nick = bestNickFromSlotText(one.text)
+    const label = path.basename(file)
+    perSlot.push({ slot: label, raw: one.text.slice(0, 80), nick })
+    if (nick) {
+      const key = nick.toLowerCase()
+      if (!seen.has(key)) {
+        seen.add(key)
+        nicks.push(nick)
+      }
+    }
   }
 
-  const text = parts.join('\n')
-  const nicks = parseNicksFromOcrText(text)
-  const engine = engines.join(',') || 'none'
+  // Fallback: parse whole band if slots yielded almost nothing
+  if (nicks.length < 2 && shots.band && fs.existsSync(shots.band)) {
+    const band = await ocrOne(shots.band)
+    if (band.text) {
+      rawParts.push(`[band] ${band.text}`)
+      for (const n of parseNicksFromOcrText(band.text)) {
+        const key = n.toLowerCase()
+        if (!seen.has(key)) {
+          seen.add(key)
+          nicks.push(n)
+        }
+      }
+    }
+  }
 
   return {
     ok: true,
-    engine,
-    pngPath: shots.full,
+    engine: [...new Set(engines)].join(',') || 'none',
+    pngPath: shots.band,
     meta: shots.meta,
-    rawText: text.slice(0, 2500),
+    rawText: rawParts.join('\n').slice(0, 2500),
+    perSlot,
     errors: errors.slice(0, 8),
-    nicks,
+    nicks: nicks.slice(0, 12),
     hint:
       nicks.length === 0
-        ? `Ничего не распознано (${engine}). Окно свернётся само — Dota на большой монитор, пик, полный экран. Сырой OCR ниже / в статусе.`
-        : 'Проверь ники — OCR ошибается. Убери лишнее и жми Load intel.',
+        ? 'Ники не найдены (OCR читал медали/цифры). Попробуй ещё раз на пике; иначе вставь ники вручную.'
+        : 'Проверь ники — OCR ошибается. Убери мусор и жми Load intel.',
   }
 }
 
