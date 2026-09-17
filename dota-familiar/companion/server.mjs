@@ -527,16 +527,17 @@ const server = http.createServer(async (req, res) => {
     // One-shot OCR of Dota pick bar (screen pixels — not memory read)
     if (method === 'POST' && url.pathname === '/ocr-nicks') {
       const body = await readBody(req)
-      const delayMs = Number(body?.delayMs ?? 2000)
-      const heightRatio = Number(body?.heightRatio ?? 0.16)
+      const delayMs = Number(body?.delayMs ?? 1500)
+      const heightPx = Number(body?.heightPx ?? 120)
+      const scale = Number(body?.scale ?? 3)
       try {
-        const result = await scanPickNicks({ delayMs, heightRatio })
+        const result = await scanPickNicks({ delayMs, heightPx, scale })
         sendJson(res, req, 200, result)
       } catch (e) {
         sendJson(res, req, 500, {
           ok: false,
           error: e instanceof Error ? e.message : String(e),
-          hint: 'Разверни Dota на основной монитор, стадия пика. OCR = снимок экрана, не чит памяти.',
+          hint: 'Окно ReplayFace свернётся. Dota на большой монитор, пик, полный экран — нажми OCR снова.',
         })
       }
       return

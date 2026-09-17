@@ -34,12 +34,14 @@ export async function fetchOcrNicks(
   rawText?: string
   hint?: string
   error?: string
+  errors?: string[]
+  meta?: string
 }> {
   const root = baseUrl.replace(/\/$/, '')
   const res = await fetch(`${root}/ocr-nicks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ delayMs: opts?.delayMs ?? 2000, heightRatio: 0.16 }),
+    body: JSON.stringify({ delayMs: opts?.delayMs ?? 1500, heightPx: 120, scale: 3 }),
   })
   const data = (await res.json()) as {
     ok?: boolean
@@ -48,9 +50,11 @@ export async function fetchOcrNicks(
     rawText?: string
     hint?: string
     error?: string
+    errors?: string[]
+    meta?: string
   }
   if (!res.ok) {
-    return { ok: false, error: data.error || `ocr-nicks ${res.status}`, hint: data.hint }
+    return { ok: false, error: data.error || `ocr-nicks ${res.status}`, hint: data.hint, rawText: data.rawText }
   }
   return {
     ok: Boolean(data.ok !== false),
@@ -59,6 +63,8 @@ export async function fetchOcrNicks(
     rawText: data.rawText,
     hint: data.hint,
     error: data.error,
+    errors: data.errors,
+    meta: data.meta,
   }
 }
 

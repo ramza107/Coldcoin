@@ -785,36 +785,31 @@ export default function App() {
     setNickHits([])
     setNickLinks([])
     try {
-      setStatus('OCR: переключись на Dota (пик) — снимок через 2 сек…')
-      // Give user time to focus Dota; avoid capturing ReplayFace on top
-      try {
-        document.body.style.opacity = '0.15'
-      } catch {
-        // ignore
-      }
-      const result = await fetchOcrNicks(companionUrl, { delayMs: 2200 })
-      try {
-        document.body.style.opacity = '1'
-      } catch {
-        // ignore
-      }
+      setStatus('OCR: свернём окно → Dota на пике → снимок…')
+      const result = await fetchOcrNicks(companionUrl, { delayMs: 1200 })
       if (!result.ok) throw new Error(result.error || 'OCR failed')
       const nicks = (result.nicks || []).filter(Boolean)
       if (!nicks.length) {
-        setError(result.hint || 'OCR ничего не нашёл. Dota на весь экран, основной монитор, стадия пика.')
-        setStatus(result.engine ? `OCR engine: ${result.engine}` : '')
+        const raw = (result.rawText || '').trim()
+        const dbg = [
+          result.hint || 'OCR пусто',
+          result.engine ? `engine: ${result.engine}` : '',
+          result.meta || '',
+          result.errors?.length ? result.errors.slice(0, 3).join(' · ') : '',
+          raw ? `raw: ${raw.slice(0, 280)}` : 'raw: (пусто — движок OCR не прочитал текст)',
+        ]
+          .filter(Boolean)
+          .join('\n')
+        setError(dbg)
+        setStatus('Верни окно ReplayFace из панели задач и попробуй ещё раз')
         return
       }
       setEnemyPaste(nicks.join('\n'))
+      setError('')
       setStatus(
-        `OCR (${result.engine}): ${nicks.length} ник(ов). Проверь список и жми Load intel / Search.`,
+        `OCR (${result.engine}): ${nicks.length} ник(ов). Проверь список и жми Load intel.`,
       )
     } catch (e) {
-      try {
-        document.body.style.opacity = '1'
-      } catch {
-        // ignore
-      }
       setError(e instanceof Error ? e.message : 'OCR failed')
     } finally {
       setBusy(false)
@@ -1136,8 +1131,8 @@ export default function App() {
             <div className="paste-box">
               <h3>Paste enemies / nick lookup</h3>
               <p className="help">
-                OCR (кнопка ниже): снимок верха экрана на пике → ники. Криво, но легально. Потом поиск: знакомые →
-                Steam → OpenDota. Лучше полный ник / ссылка профиля.
+                OCR: окно свернётся, снимок верхней панели пика (увеличение + контраст). На ультравайде берём
+                центральную зону 16:9. Потом проверь ники → Load intel. Не 100%.
               </p>
               <textarea
                 value={enemyPaste}
