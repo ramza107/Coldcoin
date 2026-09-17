@@ -132,21 +132,11 @@ function Enhance([System.Drawing.Bitmap]$srcBmp, [int]$scale) {
   $dh = [Math]::Max(1, $srcBmp.Height * $scale)
   $dst = New-Object System.Drawing.Bitmap $dw, $dh
   $gg = [System.Drawing.Graphics]::FromImage($dst)
-  $gg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-  $gg.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-  # Boost contrast / brightness for pale UI text
-  $cm = New-Object System.Drawing.Imaging.ColorMatrix @(,
-    @([float]1.8,0,0,0,0),
-    @(0,[float]1.8,0,0,0),
-    @(0,0,[float]1.8,0,0),
-    @(0,0,0,[float]1,0),
-    @([float]-0.35,[float]-0.35,[float]-0.35,0,[float]1)
-  )
-  $ia = New-Object System.Drawing.Imaging.ImageAttributes
-  $ia.SetColorMatrix($cm)
-  $gg.DrawImage($srcBmp, (New-Object System.Drawing.Rectangle 0,0,$dw,$dh), 0, 0, $srcBmp.Width, $srcBmp.Height, [System.Drawing.GraphicsUnit]::Pixel, $ia)
+  $gg.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+  $gg.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::Half
+  $gg.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighSpeed
+  $gg.DrawImage($srcBmp, 0, 0, $dw, $dh)
   $gg.Dispose()
-  $ia.Dispose()
   return $dst
 }
 
