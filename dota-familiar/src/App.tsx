@@ -1131,8 +1131,8 @@ export default function App() {
             <div className="paste-box">
               <h3>Paste enemies / nick lookup</h3>
               <p className="help">
-                OCR: окно свернётся, снимок верхней панели пика (увеличение + контраст). На ультравайде берём
-                центральную зону 16:9. Потом проверь ники → Load intel. Не 100%.
+                OCR: окно свернётся, снимок <b>10 слотов</b> сверху (не медалей). Ультравайд → центр 16:9.
+                Проверь ники → Load intel. Если снова цифры/IV — вставь ники руками.
               </p>
               <textarea
                 value={enemyPaste}

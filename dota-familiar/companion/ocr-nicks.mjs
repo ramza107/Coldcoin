@@ -275,6 +275,12 @@ function isMedalJunk(t) {
   if (/^[\d\sIVXivx.]+$/.test(t)) return true // 102, IV, 86 V
   if (/^[IVX]+$/i.test(t)) return true
   if (/^\d{1,4}$/.test(t)) return true
+  // mostly rank numerals with a stray ALL/PICK word
+  const words = t.split(/\s+/).filter(Boolean)
+  if (words.length >= 2) {
+    const junkWords = words.filter((w) => /^[\dIVX]+$/i.test(w) || JUNK.test(w) || MEDAL.test(w))
+    if (junkWords.length / words.length >= 0.6) return true
+  }
   return false
 }
 
