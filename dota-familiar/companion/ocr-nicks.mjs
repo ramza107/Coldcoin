@@ -232,7 +232,7 @@ Write-Output $result.Text
   const { stdout } = await run(
     'powershell.exe',
     ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
-    60000,
+    20000,
   )
   return String(stdout || '').trim()
 }
@@ -375,24 +375,33 @@ export async function scanPickNicks(opts = {}) {
   const errors = []
   const perSlot = []
 
-  for (const file of shots.slots) {
-    const one = await ocrOne(file)
-    engines.push(one.engine)
-    if (one.text) rawParts.push(one.text)
-    if (one.errors?.length) errors.push(...one.errors)
-    const nick = bestNickFromSlotText(one.text)
-    const label = path.basename(file)
-    perSlot.push({ slot: label, raw: one.text.slice(0, 80), nick })
-    if (nick) {
-      const key = nick.toLowerCase()
-      if (!seen.has(key)) {
-        seen.add(key)
-        nicks.push(nick)
+  // Parallel OCR (batches) — sequential 10× Windows OCR was too slow / empty
+  const concurrency = 4
+  for (let i = 0; i < shots.slots.length; i += concurrency) {
+    const batch = shots.slots.slice(i, i + concurrency)
+    const results = await Promise.all(
+      batch.map(async (file) => {
+        const one = await ocrOne(file)
+        return { file, one }
+      }),
+    )
+    for (const { file, one } of results) {
+      engines.push(one.engine)
+      if (one.text) rawParts.push(one.text)
+      if (one.errors?.length) errors.push(...one.errors)
+      const nick = bestNickFromSlotText(one.text)
+      const label = path.basename(file)
+      perSlot.push({ slot: label, raw: (one.text || '').slice(0, 80), nick })
+      if (nick) {
+        const key = nick.toLowerCase()
+        if (!seen.has(key)) {
+          seen.add(key)
+          nicks.push(nick)
+        }
       }
     }
   }
 
-  // Fallback: parse whole band if slots yielded almost nothing
   if (nicks.length < 2 && shots.band && fs.existsSync(shots.band)) {
     const band = await ocrOne(shots.band)
     if (band.text) {
@@ -407,9 +416,28 @@ export async function scanPickNicks(opts = {}) {
     }
   }
 
+  // Loose fallback from raw: keep lines that look vaguely like nicks
+  if (nicks.length === 0 && rawParts.length) {
+    for (const line of rawParts.join('\n').split(/\r?\n/)) {
+      const t = line
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/[^\p{L}\p{N}_\-. ]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (t.length < 3 || t.length > 28) continue
+      if (isMedalJunk(t)) continue
+      if (!/[a-zA-Zа-яА-ЯёЁ]/.test(t)) continue
+      if (/^[\d\sIVXivx]+$/.test(t)) continue
+      const key = t.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      nicks.push(t)
+    }
+  }
+
   return {
     ok: true,
-    engine: [...new Set(engines)].join(',') || 'none',
+    engine: [...new Set(engines.filter((e) => e && e !== 'none'))].join(',') || 'none',
     pngPath: shots.band,
     meta: shots.meta,
     rawText: rawParts.join('\n').slice(0, 2500),
@@ -418,8 +446,8 @@ export async function scanPickNicks(opts = {}) {
     nicks: nicks.slice(0, 12),
     hint:
       nicks.length === 0
-        ? 'Ники не найдены (OCR читал медали/цифры). Попробуй ещё раз на пике; иначе вставь ники вручную.'
-        : 'Проверь ники — OCR ошибается. Убери мусор и жми Load intel.',
+        ? 'Ники не найдены. Вставь вручную с верхней панели (враги слева/справа от тебя).'
+        : 'Проверь ники — OCR ошибается. Убери лишнее и жми Load intel.',
   }
 }
 

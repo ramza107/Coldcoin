@@ -785,29 +785,34 @@ export default function App() {
     setNickHits([])
     setNickLinks([])
     try {
-      setStatus('OCR: свернём окно → Dota на пике → снимок…')
+      setStatus('OCR: свернём окно → Dota на пике → снимок слотов…')
       const result = await fetchOcrNicks(companionUrl, { delayMs: 1200 })
       if (!result.ok) throw new Error(result.error || 'OCR failed')
       const nicks = (result.nicks || []).filter(Boolean)
       if (!nicks.length) {
         const raw = (result.rawText || '').trim()
-        const dbg = [
-          result.hint || 'OCR пусто',
-          result.engine ? `engine: ${result.engine}` : '',
-          result.meta || '',
-          result.errors?.length ? result.errors.slice(0, 3).join(' · ') : '',
-          raw ? `raw: ${raw.slice(0, 280)}` : 'raw: (пусто — движок OCR не прочитал текст)',
-        ]
-          .filter(Boolean)
-          .join('\n')
-        setError(dbg)
-        setStatus('Верни окно ReplayFace из панели задач и попробуй ещё раз')
+        // Put raw OCR into the box so user can edit instead of only seeing an error
+        if (raw) {
+          const loose = raw
+            .split(/\r?\n/)
+            .map((l) => l.replace(/\[band\]\s*/i, '').trim())
+            .filter((l) => l.length >= 2 && l.length <= 40)
+            .slice(0, 14)
+          if (loose.length) setEnemyPaste(loose.join('\n'))
+        }
+        setError(
+          raw
+            ? `OCR не выделил ники чисто. В поле — сырой текст, поправь руками (оставь только ники врагов) → Load intel.\nraw: ${raw.slice(0, 200)}`
+            : result.hint ||
+                'OCR пусто. Вставь ники врагов с верхней панели вручную (по одному на строку).',
+        )
+        setStatus('Верни ReplayFace из панели задач')
         return
       }
       setEnemyPaste(nicks.join('\n'))
       setError('')
       setStatus(
-        `OCR (${result.engine}): ${nicks.length} ник(ов). Проверь список и жми Load intel.`,
+        `OCR (${result.engine}): ${nicks.length} ник(ов). Убери своих/мусор → Load intel.`,
       )
     } catch (e) {
       setError(e instanceof Error ? e.message : 'OCR failed')
