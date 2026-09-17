@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ReplayFace Live</title>
+    <style>
+      :root {
+        --bg: #0c1014;
+        --ink: #e8eef5;
+        --muted: #8b9aab;
+        --ember: #ff7a39;
+        --ok: #8af0bf;
+        --bad: #ffb1b4;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        padding: 14px;
+      }
+      h1 {
+        margin: 0 0 4px;
+        font-size: 16px;
+      }
+      .sub { color: var(--muted); margin-bottom: 12px; }
+      .pill {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(232, 238, 245, 0.12);
+        margin: 0 6px 8px 0;
+        font-size: 11px;
+      }
+      .pill.ok { color: var(--ok); border-color: rgba(138, 240, 191, 0.35); }
+      .pill.wait { color: var(--ember); }
+      .pill.off { color: var(--bad); }
+      label { display: block; color: var(--muted); font-size: 11px; margin: 8px 0 4px; }
+      input {
+        width: 100%;
+        background: #141b22;
+        border: 1px solid rgba(232, 238, 245, 0.12);
+        color: var(--ink);
+        border-radius: 8px;
+        padding: 8px;
+      }
+      button {
+        margin-top: 10px;
+        width: 100%;
+        border: 0;
+        border-radius: 8px;
+        padding: 10px;
+        font-weight: 700;
+        cursor: pointer;
+        background: linear-gradient(145deg, #ff8f4d, #e45716);
+        color: #1a0c05;
+      }
+      pre {
+        margin-top: 12px;
+        background: #141b22;
+        border-radius: 8px;
+        padding: 8px;
+        max-height: 180px;
+        overflow: auto;
+        font-size: 11px;
+        color: var(--muted);
+        white-space: pre-wrap;
+      }
+      a { color: #9ec5ff; }
+    </style>
+  </head>
+  <body>
+    <h1>ReplayFace Live</h1>
+    <div class="sub">Dota roster → companion after picks</div>
+    <div>
+      <span id="dotaPill" class="pill off">Dota offline</span>
+      <span id="gepPill" class="pill off">GEP off</span>
+      <span id="pushPill" class="pill off">No push</span>
+    </div>
+    <label for="companionUrl">Companion URL</label>
+    <input id="companionUrl" value="http://127.0.0.1:17321/lobby" />
+    <button id="pushNow" type="button">Push roster now</button>
+    <p class="sub" style="margin-top:10px">
+      Needs Steam launch option <code>-gamestateintegration</code>.
+      At connect/draft: ranks & slots only. Steam IDs after <code>STRATEGY_TIME</code> (Valve).
+    </p>
+    <p class="sub">
+      Open web app at <a href="http://127.0.0.1:17321/" target="_blank">http://127.0.0.1:17321/</a>
+      (not GitHub Pages) → Live lobby → Listening ON.
+    </p>
+    <pre id="log">Waiting for Dota…</pre>
+    <script src="main.js"></script>
+  </body>
+</html>

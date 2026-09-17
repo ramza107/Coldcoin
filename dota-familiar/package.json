@@ -1,0 +1,34 @@
+{
+  "name": "dota-familiar",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "companion": "npm run build && node companion/server.mjs",
+    "companion:only": "node companion/server.mjs",
+    "desktop": "npm run build && npx --yes electron@33.2.1 desktop/main.cjs",
+    "start": "npm run companion:only",
+    "mini-client": "npm run companion",
+    "deploy": "GH_PAGES=1 npm run build && gh-pages -d dist"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.4",
+    "tesseract.js": "^5.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "gh-pages": "^6.3.0",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}

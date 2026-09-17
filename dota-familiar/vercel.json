@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/opendota/:path*",
+      "destination": "https://api.opendota.com/api/:path*"
+    }
+  ]
+}

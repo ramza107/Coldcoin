@@ -1,0 +1,11 @@
+{
+  "source": "sample",
+  "myTeam": "radiant",
+  "matchId": null,
+  "players": [
+    { "accountId": 86745912, "personaname": "You", "heroId": 1, "team": "radiant", "isOwner": true },
+    { "accountId": 111111111, "personaname": "Ally Mid", "heroId": 74, "team": "radiant" },
+    { "accountId": 222222222, "personaname": "Enemy Carry", "heroId": 44, "team": "dire" },
+    { "accountId": 333333333, "personaname": "Enemy Support", "heroId": 5, "team": "dire" }
+  ]
+}
